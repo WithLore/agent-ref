@@ -1,0 +1,42 @@
+<svg width="512" height="512" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
+  <!-- Diagonal stripe background pattern -->
+  <defs>
+    <pattern id="diagStripes" patternUnits="userSpaceOnUse" width="12" height="12" patternTransform="rotate(45)">
+      <rect width="6" height="12" fill="#000"/>
+    </pattern>
+  </defs>
+
+  <!-- Background -->
+  <rect width="512" height="512" fill="#fff"/>
+
+  <!-- Left stripe section -->
+  <rect x="0" y="0" width="120" height="512" fill="url(#diagStripes)"/>
+
+  <!-- Main frame -->
+  <rect x="120" y="0" width="392" height="512" fill="#fff" stroke="#000" stroke-width="8"/>
+  <rect x="140" y="40" width="352" height="432" fill="#fff" stroke="#000" stroke-width="4"/>
+
+  <!-- Top barcode -->
+  <g transform="translate(160, 70)">
+    <rect x="0" y="0" width="4" height="30" fill="#000"/>
+    <rect x="8" y="0" width="2" height="30" fill="#000"/>
+    <rect x="14" y="0" width="6" height="30" fill="#000"/>
+    <rect x="24" y="0" width="2" height="30" fill="#000"/>
+    <rect x="30" y="0" width="4" height="30" fill="#000"/>
+    <rect x="38" y="0" width="2" height="30" fill="#000"/>
+    <rect x="44" y="0" width="6" height="30" fill="#000"/>
+    <rect x="54" y="0" width="4" height="30" fill="#000"/>
+  </g>
+
+  <!-- Main text -->
+  <text x="256" y="200" font-family="'Arial Black', sans-serif" font-size="48" font-weight="900" fill="#000" text-anchor="middle" letter-spacing="-1">//AG</text>
+  <text x="256" y="270" font-family="'Arial Black', sans-serif" font-size="48" font-weight="900" fill="#000" text-anchor="middle" letter-spacing="-1">_REF</text>
+
+  <!-- Tech details -->
+  <text x="256" y="360" font-family="'Courier New', monospace" font-size="16" fill="#000" text-anchor="middle" font-weight="bold">v1.0.0</text>
+
+  <!-- Bottom accents -->
+  <rect x="160" y="400" width="192" height="4" fill="#000"/>
+  <rect x="440" y="60" width="40" height="40" fill="#000"/>
+  <rect x="448" y="68" width="24" height="24" fill="#fff"/>
+</svg>

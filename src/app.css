@@ -1,0 +1,98 @@
+/* AgentRef — Global Styles (Black & White) */
+
+:root {
+	/* Canvas */
+	--bg-canvas: #0a0a0a;
+	--bg-surface: #111111;
+
+	/* Sidebar & panels */
+	--bg-sidebar: #0d0d0d;
+	--bg-menu: #161616;
+
+	/* Accent — monochrome */
+	--accent: #ffffff;
+	--accent-hover: #cccccc;
+	--accent-dim: rgba(255, 255, 255, 0.12);
+
+	/* Text */
+	--text-primary: #e8e8e8;
+	--text-secondary: #808080;
+	--text-muted: #484848;
+
+	/* Status */
+	--danger: #ff4757;
+	--success: #2ed573;
+
+	/* Borders */
+	--border-subtle: rgba(255, 255, 255, 0.06);
+	--border-medium: rgba(255, 255, 255, 0.12);
+
+	/* Shadows */
+	--shadow-menu: 0 4px 24px rgba(0, 0, 0, 0.7);
+
+	/* Radius */
+	--radius-sm: 4px;
+	--radius-md: 6px;
+
+	/* Transitions */
+	--transition-fast: 100ms ease;
+
+	/* Grid */
+	--grid-color: rgba(255, 255, 255, 0.06);
+	--grid-color-major: rgba(255, 255, 255, 0.12);
+
+	/* Selection */
+	--selection: #ffffff;
+
+	/* Font stack */
+	font-family:
+		'Inter',
+		-apple-system,
+		BlinkMacSystemFont,
+		'Segoe UI',
+		system-ui,
+		sans-serif;
+}
+
+*,
+*::before,
+*::after {
+	box-sizing: border-box;
+	margin: 0;
+	padding: 0;
+}
+
+html,
+body {
+	width: 100%;
+	height: 100%;
+	overflow: hidden;
+	background: var(--bg-canvas);
+	color: var(--text-primary);
+	-webkit-font-smoothing: antialiased;
+	-moz-osx-font-smoothing: grayscale;
+}
+
+/* Prevent default drag behavior */
+img {
+	-webkit-user-drag: none;
+	user-select: none;
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+	width: 5px;
+}
+
+::-webkit-scrollbar-track {
+	background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+	background: rgba(255, 255, 255, 0.08);
+	border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+	background: rgba(255, 255, 255, 0.15);
+}
