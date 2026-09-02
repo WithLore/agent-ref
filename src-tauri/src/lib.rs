@@ -11,6 +11,11 @@ pub fn run() {
     .plugin(tauri_plugin_dialog::init())
     .plugin(tauri_plugin_fs::init())
     .setup(|app| {
+      // Create the local recovery directory before the webview starts writing.
+      // This also makes the fallback fs-plugin path reliable on a fresh install.
+      if let Some(home) = std::env::var_os("HOME") {
+        std::fs::create_dir_all(std::path::PathBuf::from(home).join(".agentref"))?;
+      }
       if cfg!(debug_assertions) {
         app.handle().plugin(
           tauri_plugin_log::Builder::default()

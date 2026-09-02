@@ -11,6 +11,16 @@ import { createBoard, createProject } from '$lib/items/item-types.js';
 
 export function createProjectStore() {
 	let project = $state<ProjectData>(createProject());
+	let changeHandler: ((project: ProjectData) => void) | null = null;
+
+	function commitProject(next: ProjectData) {
+		project = next;
+		changeHandler?.(project);
+	}
+
+	function setChangeHandler(handler: ((project: ProjectData) => void) | null) {
+		changeHandler = handler;
+	}
 
 	// --- Active board (derived) ---
 
@@ -27,7 +37,7 @@ export function createProjectStore() {
 		},
 		update(fn: (items: BoardItem[]) => BoardItem[]) {
 			const now = new Date().toISOString();
-			project = {
+			commitProject({
 				...project,
 				modifiedAt: now,
 				boards: project.boards.map((b) =>
@@ -35,7 +45,7 @@ export function createProjectStore() {
 						? { ...b, items: fn(b.items), modifiedAt: now }
 						: b
 				)
-			};
+			});
 		}
 	};
 
@@ -47,7 +57,7 @@ export function createProjectStore() {
 		},
 		updateGroups(fn: (groups: GroupData[]) => GroupData[]) {
 			const now = new Date().toISOString();
-			project = {
+			commitProject({
 				...project,
 				modifiedAt: now,
 				boards: project.boards.map((b) =>
@@ -55,7 +65,7 @@ export function createProjectStore() {
 						? { ...b, groups: fn(b.groups), modifiedAt: now }
 						: b
 				)
-			};
+			});
 		}
 	};
 
@@ -65,7 +75,7 @@ export function createProjectStore() {
 		},
 		updateConnections(fn: (connections: BoardConnection[]) => BoardConnection[]) {
 			const now = new Date().toISOString();
-			project = {
+			commitProject({
 				...project,
 				modifiedAt: now,
 				boards: project.boards.map((board) =>
@@ -73,7 +83,7 @@ export function createProjectStore() {
 						? { ...board, connections: fn(board.connections), modifiedAt: now }
 						: board
 				)
-			};
+			});
 		}
 	};
 
@@ -86,7 +96,7 @@ export function createProjectStore() {
 		groupsFn: (groups: GroupData[]) => GroupData[]
 	) {
 		const now = new Date().toISOString();
-		project = {
+		commitProject({
 			...project,
 			modifiedAt: now,
 			boards: project.boards.map((b) =>
@@ -94,18 +104,18 @@ export function createProjectStore() {
 					? { ...b, items: itemsFn(b.items), groups: groupsFn(b.groups), modifiedAt: now }
 					: b
 			)
-		};
+		});
 	}
 
 	// --- Board management ---
 
 	function addBoard(name?: string): string {
 		const board = createBoard(name ?? `Board ${project.boards.length + 1}`);
-		project = {
+		commitProject({
 			...project,
 			boards: [...project.boards, board],
 			modifiedAt: new Date().toISOString()
-		};
+		});
 		return board.id;
 	}
 
@@ -113,25 +123,25 @@ export function createProjectStore() {
 		if (project.boards.length <= 1) return; // never delete last board
 		const remaining = project.boards.filter((b) => b.id !== id);
 		const needSwitch = project.activeBoardId === id;
-		project = {
+		commitProject({
 			...project,
 			boards: remaining,
 			activeBoardId: needSwitch ? remaining[0].id : project.activeBoardId,
 			modifiedAt: new Date().toISOString()
-		};
+		});
 	}
 
 	function renameBoard(id: string, name: string) {
-		project = {
+		commitProject({
 			...project,
 			boards: project.boards.map((b) => (b.id === id ? { ...b, name } : b)),
 			modifiedAt: new Date().toISOString()
-		};
+		});
 	}
 
 	function switchBoard(id: string) {
 		if (!project.boards.find((b) => b.id === id)) return;
-		project = { ...project, activeBoardId: id };
+		commitProject({ ...project, activeBoardId: id });
 	}
 
 	function duplicateBoard(id: string): string {
@@ -145,23 +155,23 @@ export function createProjectStore() {
 			createdAt: now,
 			modifiedAt: now
 		};
-		project = {
+		commitProject({
 			...project,
 			boards: [...project.boards, newBoard],
 			modifiedAt: now
-		};
+		});
 		return newBoard.id;
 	}
 
 	// --- Viewport per board ---
 
 	function saveViewport(x: number, y: number, scale: number) {
-		project = {
+		commitProject({
 			...project,
 			boards: project.boards.map((b) =>
 				b.id === project.activeBoardId ? { ...b, viewport: { x, y, scale } } : b
 			)
-		};
+		});
 	}
 
 	function getViewport(): { x: number; y: number; scale: number } {
@@ -175,11 +185,11 @@ export function createProjectStore() {
 	}
 
 	function loadProjectData(data: ProjectData) {
-		project = data;
+		commitProject(data);
 	}
 
 	function renameProject(name: string) {
-		project = { ...project, name, modifiedAt: new Date().toISOString() };
+		commitProject({ ...project, name, modifiedAt: new Date().toISOString() });
 	}
 
 	return {
@@ -210,6 +220,7 @@ export function createProjectStore() {
 		getViewport,
 		getProjectData,
 		loadProjectData,
-		renameProject
+		renameProject,
+		setChangeHandler
 	};
 }

@@ -36,7 +36,9 @@ function isValidItem(item: unknown): item is BoardItem {
  * Returns { json, strippedBlobCount } so callers can warn the user.
  */
 export function serializeProject(project: ProjectData): { json: string; strippedBlobCount: number } {
-	const sanitized = structuredClone(project);
+	// Project state is JSON-only, and Svelte exposes it through reactive proxies.
+	// structuredClone rejects proxies, so clone through JSON before sanitizing.
+	const sanitized = JSON.parse(JSON.stringify(project)) as ProjectData;
 	sanitized.modifiedAt = new Date().toISOString();
 
 	let strippedBlobCount = 0;

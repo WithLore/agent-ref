@@ -77,6 +77,9 @@ fn resolve_project_path(explicit: Option<&str>) -> Result<String, String> {
     if let Some(live) = read_live_state() {
         if let Some(p) = live.get("projectPath").and_then(|v| v.as_str()) {
             if !p.is_empty() {
+                if let Some(project) = live.get("project") {
+                    write_project(p, project)?;
+                }
                 return Ok(p.to_string());
             }
         }

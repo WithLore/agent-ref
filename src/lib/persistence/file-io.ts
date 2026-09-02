@@ -8,9 +8,22 @@ import { serializeProject, deserializeProject, FILE_EXTENSION } from './serializ
 import type { ProjectData } from '$lib/items/item-types.js';
 
 let currentFilePath: string | null = null;
+let recoveryFilePath: string | null = null;
+
+const RECOVERY_STORAGE_KEY = 'agentref:recovery:v1';
+const RECOVERY_FILE_NAME = 'autosave.json';
+const LEGACY_RECOVERY_FILE_NAME = 'autosave.agentref';
 
 export function getCurrentFilePath(): string | null {
 	return currentFilePath;
+}
+
+/**
+ * Path agents should use for the live project. Unsaved projects use the
+ * continuously maintained recovery file instead of having no path at all.
+ */
+export function getLiveProjectPath(): string | null {
+	return currentFilePath ?? recoveryFilePath;
 }
 
 export function getFileName(): string | null {
@@ -31,6 +44,7 @@ export async function saveProject(project: ProjectData): Promise<{ success: bool
 	} else {
 		success = saveProjectBrowser(json, project.name);
 	}
+	if (success) await saveRecoveryJson(json);
 	return { success, strippedBlobCount };
 }
 
@@ -45,6 +59,7 @@ export async function saveProjectAs(project: ProjectData): Promise<{ success: bo
 	} else {
 		success = saveProjectBrowser(json, project.name);
 	}
+	if (success) await saveRecoveryJson(json);
 	return { success, strippedBlobCount };
 }
 
@@ -59,19 +74,154 @@ export async function loadProject(): Promise<ProjectData | null> {
 }
 
 /**
- * Silent auto-save — only writes if a file path is already set (Tauri only).
- * Does NOT prompt the user. Returns true if saved, false if no path or browser mode.
+ * Write the latest project to recovery storage and, when one has been chosen,
+ * the user's project file. Never prompts.
  */
 export async function saveProjectSilent(project: ProjectData): Promise<boolean> {
-	if (!isTauri || !currentFilePath) return false;
+	const { json } = serializeProject(project);
+	const recoverySaved = await saveRecoveryJson(json);
+
+	if (!isTauri || !currentFilePath) return recoverySaved;
 	try {
-		const { json } = serializeProject(project);
 		const { writeTextFile } = await import('@tauri-apps/plugin-fs');
 		await writeTextFile(currentFilePath, json);
 		return true;
 	} catch (err) {
 		console.error('[AgentRef] Auto-save failed:', err);
+		return recoverySaved;
+	}
+}
+
+/**
+ * Synchronous crash/quit safety net. Web views may be torn down before an
+ * asynchronous file write finishes, so keep the same project JSON locally too.
+ */
+export function saveProjectRecoverySync(project: ProjectData): boolean {
+	try {
+		return writeRecoveryToLocalStorage(serializeProject(project).json);
+	} catch (err) {
+		console.error('[AgentRef] Recovery checkpoint failed:', err);
 		return false;
+	}
+}
+
+/** Load the newest valid automatic recovery snapshot, if one exists. */
+export async function loadProjectRecovery(): Promise<ProjectData | null> {
+	const candidates: Array<string | null> = [readRecoveryFromLocalStorage()];
+	let legacyRecovery: string | null = null;
+	let hasModernDiskRecovery = false;
+
+	if (isTauri) {
+		try {
+			const path = await resolveRecoveryFilePath();
+			const { exists, readTextFile } = await import('@tauri-apps/plugin-fs');
+			if (await exists(path)) {
+				hasModernDiskRecovery = true;
+				candidates.push(await readTextFile(path));
+			}
+		} catch (err) {
+			console.warn('[AgentRef] Could not read disk recovery:', err);
+		}
+
+		try {
+			const { homeDir, join } = await import('@tauri-apps/api/path');
+			const { exists, readTextFile } = await import('@tauri-apps/plugin-fs');
+			const home = await homeDir();
+			const legacyPath = await join(home, '.agentref', LEGACY_RECOVERY_FILE_NAME);
+			if (await exists(legacyPath)) {
+				legacyRecovery = await readTextFile(legacyPath);
+				candidates.push(legacyRecovery);
+			}
+
+			const liveStatePath = await join(home, '.agentref', 'live-state.json');
+			if (await exists(liveStatePath)) {
+				const liveState = JSON.parse(await readTextFile(liveStatePath)) as { project?: unknown };
+				if (liveState.project) {
+					hasModernDiskRecovery = true;
+					candidates.push(JSON.stringify(liveState.project));
+				}
+			}
+		} catch (err) {
+			console.warn('[AgentRef] Could not read live project recovery:', err);
+		}
+	}
+
+	// One-time migration: prefer the old disk recovery over a newer blank
+	// webview snapshot until the first modern disk/live-state copy exists.
+	if (!hasModernDiskRecovery && legacyRecovery) {
+		try {
+			return deserializeProject(legacyRecovery);
+		} catch {
+			// Fall through to the other valid candidates.
+		}
+	}
+
+	return selectNewestRecovery(candidates);
+}
+
+/** Pure candidate selection, exported so recovery behavior can be tested. */
+export function selectNewestRecovery(candidates: Array<string | null | undefined>): ProjectData | null {
+	let newest: ProjectData | null = null;
+	let newestTime = Number.NEGATIVE_INFINITY;
+
+	for (const json of candidates) {
+		if (!json) continue;
+		try {
+			const project = deserializeProject(json);
+			const timestamp = Date.parse(project.modifiedAt || project.createdAt);
+			const time = Number.isNaN(timestamp) ? 0 : timestamp;
+			if (!newest || time > newestTime) {
+				newest = project;
+				newestTime = time;
+			}
+		} catch {
+			// Ignore a corrupted candidate and continue to the other recovery copy.
+		}
+	}
+
+	return newest;
+}
+
+async function resolveRecoveryFilePath(): Promise<string> {
+	if (recoveryFilePath) return recoveryFilePath;
+	const { homeDir, join } = await import('@tauri-apps/api/path');
+	const home = await homeDir();
+	recoveryFilePath = await join(home, '.agentref', RECOVERY_FILE_NAME);
+	return recoveryFilePath;
+}
+
+async function saveRecoveryJson(json: string): Promise<boolean> {
+	const localSaved = writeRecoveryToLocalStorage(json);
+	if (!isTauri) return localSaved;
+
+	try {
+		const { writeTextFile } = await import('@tauri-apps/plugin-fs');
+		await writeTextFile(await resolveRecoveryFilePath(), json);
+		return true;
+	} catch (err) {
+		console.error('[AgentRef] Disk recovery save failed:', err);
+		return localSaved;
+	}
+}
+
+function writeRecoveryToLocalStorage(json: string): boolean {
+	if (typeof window === 'undefined') return false;
+	try {
+		window.localStorage.setItem(RECOVERY_STORAGE_KEY, json);
+		return true;
+	} catch (err) {
+		console.warn('[AgentRef] Local recovery save failed:', err);
+		return false;
+	}
+}
+
+function readRecoveryFromLocalStorage(): string | null {
+	if (typeof window === 'undefined') return null;
+	try {
+		return window.localStorage.getItem(RECOVERY_STORAGE_KEY);
+	} catch (err) {
+		console.warn('[AgentRef] Local recovery read failed:', err);
+		return null;
 	}
 }
 

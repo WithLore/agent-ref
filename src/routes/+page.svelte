@@ -22,8 +22,16 @@
 	import { createTodoEntry, getUrlDomain, isYoutubeUrl, isVideoUrl, isImageUrl } from '$lib/items/item-types.js';
 	import type { BoardConnection, BoardItem, TodoListMeta, VideoMeta, GroupData, ProjectData } from '$lib/items/item-types.js';
 	import { getTodoListHeight } from '$lib/board/connection-geometry.js';
-	import { saveProject, saveProjectAs, saveProjectSilent, loadProject, getCurrentFilePath } from '$lib/persistence/file-io.js';
-	import { deserializeProject } from '$lib/persistence/serialization.js';
+	import {
+		saveProject,
+		saveProjectAs,
+		saveProjectSilent,
+		saveProjectRecoverySync,
+		loadProject,
+		loadProjectRecovery,
+		getLiveProjectPath
+	} from '$lib/persistence/file-io.js';
+	import { deserializeProject, serializeProject } from '$lib/persistence/serialization.js';
 	import { exportPackageToFile, importPackageFromFile } from '$lib/persistence/packaging.js';
 	import { icons } from '$lib/ui/icons.js';
 	import {
@@ -235,13 +243,16 @@
 	// --- Clipboard buffer for item copy/paste ---
 	let clipboardBuffer: BoardItem[] = [];
 
-	// --- Auto-save (30s debounce, only when a file path exists) ---
+	// --- Auto-save and automatic recovery ---
 	let autoSaveTimer: ReturnType<typeof setTimeout> | null = null;
 	let autoSaveDirty = false;
+	let autoSaveRevision = 0;
 	let autoSavePrimed = false;
+	let recoveryReady = $state(false);
 
 	let autoSaveSignature = $derived.by(() =>
 		JSON.stringify({
+			project: projectStore.project,
 			boardId: projectStore.activeBoard.id,
 			items: activeItems.map((it) => ({
 				id: it.id,
@@ -278,24 +289,27 @@
 	);
 
 	function markDirty() {
-		// Never auto-save while in a collab room as a joiner — would overwrite local file with host's data
+		// Never auto-save while in a collab room as a joiner — would overwrite local recovery with host data.
 		if (collabRole === 'joiner') return;
 		autoSaveDirty = true;
+		const revision = ++autoSaveRevision;
 		if (autoSaveTimer) clearTimeout(autoSaveTimer);
 		autoSaveTimer = setTimeout(async () => {
 			if (autoSaveDirty && collabRole !== 'joiner') {
 				const saved = await saveProjectSilent(getPersistableProjectData());
-				if (saved) {
+				if (saved && revision === autoSaveRevision) {
 					autoSaveDirty = false;
 					console.log('[AgentRef] Auto-saved');
+					void writeLiveState(selection.ids, projectStore.activeBoard.id);
 				}
 			}
-		}, 30_000);
+		}, 750);
 	}
 
 	// Mark dirty on any board/group mutation.
 	$effect(() => {
 		void autoSaveSignature;
+		if (!recoveryReady) return;
 		if (!autoSavePrimed) {
 			autoSavePrimed = true;
 			return;
@@ -338,7 +352,32 @@
 		capturedAt: string;
 	};
 
+	function checkpointBeforeClose() {
+		if (!recoveryReady || collabRole === 'joiner') return;
+		saveProjectRecoverySync(getPersistableProjectData());
+	}
+
 	onMount(async () => {
+		window.addEventListener('beforeunload', checkpointBeforeClose);
+		window.addEventListener('pagehide', checkpointBeforeClose);
+
+		try {
+			const recovered = await loadProjectRecovery();
+			if (recovered) {
+				applyLoadedProject(recovered);
+				console.log('[AgentRef] Restored automatic recovery');
+			}
+		} catch (err) {
+			console.warn('[AgentRef] Automatic recovery failed:', err);
+		} finally {
+			// Enable change tracking before the initial disk mirror. A failed or slow
+			// initial write must never leave live auto-save disabled.
+			recoveryReady = true;
+			projectStore.setChangeHandler(markDirty);
+			void saveProjectSilent(getPersistableProjectData());
+			void writeLiveState(selection.ids, projectStore.activeBoard.id);
+		}
+
 		if (isTauri) {
 			unlistenTauriDrop = await setupTauriFileDrop(handleTauriDrop);
 			console.log('[AgentRef] Tauri file drop listener active');
@@ -353,7 +392,7 @@
 			});
 			unlistenMcpReload = await listen<string>('mcp:project-changed', async (event) => {
 				const changedPath = event.payload;
-				const currentPath = getCurrentFilePath();
+				const currentPath = getLiveProjectPath();
 				if (currentPath && changedPath === currentPath && !yjsSync) {
 					// Reload the project from disk
 					try {
@@ -373,6 +412,9 @@
 	});
 
 	onDestroy(() => {
+		checkpointBeforeClose();
+		window.removeEventListener('beforeunload', checkpointBeforeClose);
+		window.removeEventListener('pagehide', checkpointBeforeClose);
 		for (const url of objectUrls) {
 			URL.revokeObjectURL(url);
 		}
@@ -393,7 +435,7 @@
 	let liveStateTimer: ReturnType<typeof setTimeout> | null = null;
 
 	async function writeLiveState(selectedIds: Set<string>, activeBoardId: string) {
-		if (!isTauri) return;
+		if (!isTauri || !recoveryReady || collabRole === 'joiner') return;
 		try {
 			const { homeDir, join } = await import('@tauri-apps/api/path');
 			const { mkdir, writeTextFile } = await import('@tauri-apps/plugin-fs');
@@ -402,10 +444,12 @@
 			const dir = await join(home, '.agentref');
 			const filePath = await join(dir, 'live-state.json');
 
+			const project = JSON.parse(serializeProject(getPersistableProjectData()).json) as ProjectData;
 			const state = {
 				selectedIds: Array.from(selectedIds),
 				activeBoardId,
-				projectPath: getCurrentFilePath(),
+				projectPath: getLiveProjectPath(),
+				project,
 				timestamp: new Date().toISOString()
 			};
 
@@ -419,6 +463,7 @@
 	$effect(() => {
 		const ids = selection.ids;
 		const boardId = projectStore.activeBoard.id;
+		if (!recoveryReady) return;
 		if (liveStateTimer) clearTimeout(liveStateTimer);
 		liveStateTimer = setTimeout(() => writeLiveState(ids, boardId), 200);
 	});

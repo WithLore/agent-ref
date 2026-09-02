@@ -39,6 +39,7 @@
       "identifier": "fs:scope",
       "allow": [
         { "path": "$APPDATA/**" },
+        { "path": "$HOME/.agentref" },
         { "path": "$HOME/.agentref/**" },
         { "path": "$DESKTOP/**" },
         { "path": "$DOCUMENT/**" },

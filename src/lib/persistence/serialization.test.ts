@@ -3,6 +3,14 @@ import { createItem, createProject, createTodoEntry } from '$lib/items/item-type
 import { deserializeProject, serializeProject } from './serialization.js';
 
 describe('project serialization v2', () => {
+	it('serializes reactive proxy-shaped project state', () => {
+		const project = createProject('Reactive');
+		const proxy = new Proxy(project, {});
+
+		expect(() => serializeProject(proxy)).not.toThrow();
+		expect(deserializeProject(serializeProject(proxy).json).name).toBe('Reactive');
+	});
+
 	it('round-trips permanent todo and connection timestamps', () => {
 		const project = createProject('Timestamped');
 		const todo = createTodoEntry('Review cut');
