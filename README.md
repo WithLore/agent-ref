@@ -11,6 +11,7 @@ Drop images, videos, links, timestamped to-do lists, and text notes onto an infi
 - Zoom-to-cursor for precise navigation
 - Drag-and-drop files from your system
 - Paste images, URLs, and text from clipboard
+- Press **Command+Shift+2** anywhere on macOS to capture an area into the active board and clipboard
 - Multi-select with Shift+click
 - Always-on-top window mode
 
@@ -55,6 +56,7 @@ Drop images, videos, links, timestamped to-do lists, and text notes onto an infi
 | `Delete` / `Backspace` | Delete selected items |
 | `Space` + drag | Pan canvas |
 | `Scroll wheel` | Zoom |
+| `Command+Shift+2` | Capture an area to the active board and clipboard (macOS) |
 
 ## Getting Started
 

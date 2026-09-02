@@ -18,6 +18,7 @@
 	let {
 		items,
 		connections = [],
+		captureShortcut,
 		groups = [],
 		viewportTransform,
 		viewportX,
@@ -58,6 +59,7 @@
 	}: {
 		items: BoardItem[];
 		connections?: BoardConnection[];
+		captureShortcut?: string;
 		groups?: GroupData[];
 		viewportTransform: string;
 		viewportX: number;
@@ -503,6 +505,9 @@
 			<div class="empty-hint">
 				Add a to-do, paste a link, or drop media here
 			</div>
+			{#if captureShortcut}
+				<div class="empty-shortcut">{captureShortcut}</div>
+			{/if}
 		</div>
 	{/if}
 </div>
@@ -570,6 +575,13 @@
 
 	.empty-hint {
 		font-size: 0.85rem;
+		color: var(--text-muted, #484848);
+	}
+
+	.empty-shortcut {
+		margin-top: 0.8rem;
+		font-size: 0.72rem;
+		letter-spacing: 0.04em;
 		color: var(--text-muted, #484848);
 	}
 </style>

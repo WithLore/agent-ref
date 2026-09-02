@@ -330,6 +330,13 @@
 	let unlistenTauriDrop: (() => void) | null = null;
 
 	let unlistenMcpReload: (() => void) | null = null;
+	let unlistenScreenshotCaptured: (() => void) | null = null;
+	let unlistenScreenshotError: (() => void) | null = null;
+
+	type ScreenshotCapturedPayload = {
+		path: string;
+		capturedAt: string;
+	};
 
 	onMount(async () => {
 		if (isTauri) {
@@ -338,6 +345,12 @@
 
 			// Listen for MCP-triggered project changes (agent wrote to the file)
 			const { listen } = await import('@tauri-apps/api/event');
+			unlistenScreenshotCaptured = await listen<ScreenshotCapturedPayload>('screenshot:captured', (event) => {
+				void handleScreenshotCaptured(event.payload);
+			});
+			unlistenScreenshotError = await listen<string>('screenshot:error', (event) => {
+				console.warn('[AgentRef] Screenshot capture failed:', event.payload);
+			});
 			unlistenMcpReload = await listen<string>('mcp:project-changed', async (event) => {
 				const changedPath = event.payload;
 				const currentPath = getCurrentFilePath();
@@ -366,6 +379,8 @@
 		objectUrls.clear();
 		unlistenTauriDrop?.();
 		unlistenMcpReload?.();
+		unlistenScreenshotCaptured?.();
+		unlistenScreenshotError?.();
 		if (yjsSync && collabRole === 'host') {
 			syncHostCollabStateToProjectStore(yjsSync);
 		}
@@ -985,6 +1000,28 @@
 		});
 	}
 
+	async function handleScreenshotCaptured(payload: ScreenshotCapturedPayload) {
+		const url = await filePathToUrl(payload.path);
+		const position = getOpenCanvasPosition(300, 200);
+		const id = actions.addItem({
+			type: 'image',
+			url,
+			x: position.x,
+			y: position.y,
+			width: 300,
+			height: 200,
+			createdAt: payload.capturedAt,
+			updatedAt: payload.capturedAt
+		});
+		const snapshot = cloneState(activeItems.find((item) => item.id === id));
+		selection.selectAll([id]);
+		if (snapshot) history.push({
+			label: 'Capture screenshot',
+			undo: () => { actions.deleteItems(new Set([id])); },
+			redo: () => actions.restoreItems([snapshot])
+		});
+	}
+
 	// --- Rating/tag handlers ---
 
 	function handleRate(id: string, rating: number) {
@@ -1519,6 +1556,9 @@
 	<Canvas
 		items={activeItems}
 		connections={activeConnections}
+		captureShortcut={isTauri && typeof navigator !== 'undefined' && /Mac/.test(navigator.platform)
+			? '⌘⇧2 to capture anything'
+			: undefined}
 		groups={activeGroups}
 		viewportTransform={viewport.transform}
 		viewportX={viewport.x}
