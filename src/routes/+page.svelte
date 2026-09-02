@@ -5,11 +5,13 @@
 	import ContextMenu from '$lib/ui/ContextMenu.svelte';
 	import SelectionToolbar from '$lib/ui/SelectionToolbar.svelte';
 	import ConnectionIndicator from '$lib/ui/ConnectionIndicator.svelte';
+	import QuickAdd from '$lib/ui/QuickAdd.svelte';
 	import PeerCursors from '$lib/canvas/PeerCursors.svelte';
 	import { createViewport } from '$lib/canvas/viewport.svelte.js';
 	import { createSelection } from '$lib/canvas/selection.svelte.js';
 	import { createProjectStore } from '$lib/board/project-store.svelte.js';
 	import { createBoardActions } from '$lib/board/board-actions.js';
+	import { createConnectionActions } from '$lib/board/connection-actions.js';
 	import { createGroupActions } from '$lib/board/group-actions.js';
 	import { createHistoryStore } from '$lib/board/history-store.svelte.js';
 	import { createYjsSync, type PeerInfo, type CollabStatus } from '$lib/board/yjs-sync.svelte.js';
@@ -17,9 +19,11 @@
 	import { screenToCanvas, canvasToScreen } from '$lib/canvas/coordinates.js';
 	import { computeAlignment, computeDistribution } from '$lib/board/alignment.js';
 	import type { AlignDirection, DistributeDirection } from '$lib/board/alignment.js';
-	import { isYoutubeUrl, isVideoUrl, isImageUrl } from '$lib/items/item-types.js';
-	import type { BoardItem, VideoMeta, GroupData, ProjectData } from '$lib/items/item-types.js';
+	import { createTodoEntry, getUrlDomain, isYoutubeUrl, isVideoUrl, isImageUrl } from '$lib/items/item-types.js';
+	import type { BoardConnection, BoardItem, TodoListMeta, VideoMeta, GroupData, ProjectData } from '$lib/items/item-types.js';
+	import { getTodoListHeight } from '$lib/board/connection-geometry.js';
 	import { saveProject, saveProjectAs, saveProjectSilent, loadProject, getCurrentFilePath } from '$lib/persistence/file-io.js';
+	import { deserializeProject } from '$lib/persistence/serialization.js';
 	import { exportPackageToFile, importPackageFromFile } from '$lib/persistence/packaging.js';
 	import { icons } from '$lib/ui/icons.js';
 	import {
@@ -38,7 +42,12 @@
 	const contextMenu = createContextMenuState();
 	const history = createHistoryStore();
 	const actions = createBoardActions(projectStore.boardStore);
+	const connectionActions = createConnectionActions(projectStore.connectionStore);
 	const groupActions = createGroupActions(projectStore.groupStore, projectStore.boardStore, projectStore);
+
+	function cloneState<T>(value: T): T {
+		return structuredClone($state.snapshot(value)) as T;
+	}
 
 	let sidebarCollapsed = $state(true);
 
@@ -59,8 +68,9 @@
 
 	function syncHostCollabStateToProjectStore(sync: ReturnType<typeof createYjsSync> | null = yjsSync) {
 		if (!sync || collabRole !== 'host') return;
-		projectStore.boardStore.update(() => structuredClone(sync.boardStore.items));
-		projectStore.groupStore.updateGroups(() => structuredClone(sync.groupStore.groups));
+		projectStore.boardStore.update(() => cloneState(sync.boardStore.items));
+		projectStore.groupStore.updateGroups(() => cloneState(sync.groupStore.groups));
+		projectStore.connectionStore.updateConnections(() => cloneState(sync.connectionStore.connections));
 	}
 
 	function getPersistableProjectData(): ProjectData {
@@ -114,6 +124,7 @@
 		// Host loads current board data into CRDT
 		sync.loadItems(projectStore.boardStore.items);
 		sync.loadGroups(projectStore.groupStore.groups);
+		sync.loadConnections(projectStore.connectionStore.connections);
 
 		sync.setLocalUser(myName, myColor);
 		sync.setLocalBoard(projectStore.activeBoard.id);
@@ -132,7 +143,7 @@
 		if (!isValidRoomCode(normalizedCode)) return;
 
 		// Snapshot local state so we can restore it when leaving the room
-		preJoinSnapshot = structuredClone(projectStore.getProjectData());
+		preJoinSnapshot = cloneState(projectStore.getProjectData());
 
 		const roomId = roomCodeToId(normalizedCode);
 		const sync = createYjsSync(roomId, projectStore.activeBoard.id);
@@ -179,20 +190,25 @@
 	function rebindToSync(sync: ReturnType<typeof createYjsSync>) {
 		const newActions = createBoardActions(sync.boardStore);
 		const newGroupActions = createGroupActions(sync.groupStore, sync.boardStore, sync);
+		const newConnectionActions = createConnectionActions(sync.connectionStore);
 		Object.assign(actions, newActions);
 		Object.assign(groupActions, newGroupActions);
+		Object.assign(connectionActions, newConnectionActions);
 	}
 
 	function rebindToLocal() {
 		const newActions = createBoardActions(projectStore.boardStore);
 		const newGroupActions = createGroupActions(projectStore.groupStore, projectStore.boardStore, projectStore);
+		const newConnectionActions = createConnectionActions(projectStore.connectionStore);
 		Object.assign(actions, newActions);
 		Object.assign(groupActions, newGroupActions);
+		Object.assign(connectionActions, newConnectionActions);
 	}
 
 	// --- Active stores: route to Yjs CRDT when in collab mode, else local ---
 	let activeItems = $derived(yjsSync ? yjsSync.boardStore.items : projectStore.boardStore.items);
 	let activeGroups = $derived(yjsSync ? yjsSync.groupStore.groups : projectStore.groupStore.groups);
+	let activeConnections = $derived(yjsSync ? yjsSync.connectionStore.connections : projectStore.connectionStore.connections);
 
 	// Poll peers and status from awareness (reactive via $effect)
 	$effect(() => {
@@ -240,7 +256,11 @@
 				groupId: it.groupId ?? null,
 				rating: it.rating,
 				tags: it.tags,
-				videoMeta: it.videoMeta ?? null
+				videoMeta: it.videoMeta ?? null,
+				createdAt: it.createdAt,
+				updatedAt: it.updatedAt,
+				todoMeta: it.todoMeta ?? null,
+				linkMeta: it.linkMeta ?? null
 			})),
 			groups: activeGroups.map((g) => ({
 				id: g.id,
@@ -252,7 +272,8 @@
 				height: g.height,
 				zIndex: g.zIndex,
 				locked: g.locked
-			}))
+			})),
+			connections: activeConnections
 		})
 	);
 
@@ -325,7 +346,7 @@
 					try {
 						const { readTextFile } = await import('@tauri-apps/plugin-fs');
 						const json = await readTextFile(currentPath);
-						const data = JSON.parse(json) as ProjectData;
+						const data = deserializeProject(json);
 						projectStore.loadProjectData(data);
 						console.log('[AgentRef] Reloaded project from MCP change');
 					} catch (err) {
@@ -478,7 +499,7 @@
 		if (isCtrlCombo && e.key === 'c' && !e.shiftKey) {
 			if (selection.ids.size > 0) {
 				e.preventDefault();
-				clipboardBuffer = activeItems.filter((it) => selection.ids.has(it.id)).map((it) => ({ ...it }));
+				clipboardBuffer = activeItems.filter((it) => selection.ids.has(it.id)).map((it) => cloneState(it));
 			}
 			return;
 		}
@@ -493,7 +514,9 @@
 					x: item.x + 30,
 					y: item.y + 30,
 					width: item.width,
-					height: item.height
+					height: item.height,
+					todoMeta: item.todoMeta ? cloneState(item.todoMeta) : undefined,
+					linkMeta: item.linkMeta ? { ...item.linkMeta } : undefined
 				});
 				newIds.push(newId);
 			}
@@ -508,7 +531,9 @@
 						actions.addItem({
 							type: item.type, url: item.url,
 							x: item.x, y: item.y,
-							width: item.width, height: item.height
+							width: item.width, height: item.height,
+							todoMeta: item.todoMeta ? cloneState(item.todoMeta) : undefined,
+							linkMeta: item.linkMeta ? { ...item.linkMeta } : undefined
 						});
 					}
 				}
@@ -528,7 +553,9 @@
 					x: item.x + 20,
 					y: item.y + 20,
 					width: item.width,
-					height: item.height
+					height: item.height,
+					todoMeta: item.todoMeta ? cloneState(item.todoMeta) : undefined,
+					linkMeta: item.linkMeta ? { ...item.linkMeta } : undefined
 				});
 				newIds.push(newId);
 			}
@@ -541,7 +568,9 @@
 						actions.addItem({
 							type: item.type, url: item.url,
 							x: item.x + 20, y: item.y + 20,
-							width: item.width, height: item.height
+							width: item.width, height: item.height,
+							todoMeta: item.todoMeta ? cloneState(item.todoMeta) : undefined,
+							linkMeta: item.linkMeta ? { ...item.linkMeta } : undefined
 						});
 					}
 				}
@@ -748,12 +777,14 @@
 	function handleDeleteSelected() {
 		const ids = selection.deleteSelected();
 		if (ids.length > 0) {
+			const removedConnections = connectionActions.removeForItems(new Set(ids));
 			const deleted = actions.deleteItems(new Set(ids));
 			// Undo for delete
 			history.push({
 				label: deleted.length > 1 ? `Delete ${deleted.length} items` : 'Delete item',
-				undo: () => actions.restoreItems(deleted),
+				undo: () => { actions.restoreItems(deleted); connectionActions.restore(removedConnections); },
 				redo: () => {
+					connectionActions.remove(new Set(removedConnections.map((connection) => connection.id)));
 					actions.deleteItems(new Set(deleted.map((it) => it.id)));
 				}
 			});
@@ -788,6 +819,169 @@
 			label: 'Edit text',
 			undo: () => actions.updateText(id, oldText),
 			redo: () => actions.updateText(id, text)
+		});
+	}
+
+	function applyTodoState(id: string, todoMeta: TodoListMeta, height: number, updatedAt: string) {
+		const item = activeItems.find((candidate) => candidate.id === id);
+		if (!item) return;
+		actions.resizeItem(id, item.width, height);
+		actions.setTodoMeta(id, todoMeta, updatedAt);
+	}
+
+	function commitTodoChange(
+		id: string,
+		label: string,
+		change: (meta: TodoListMeta, timestamp: string) => TodoListMeta
+	) {
+		const item = activeItems.find((candidate) => candidate.id === id);
+		if (!item?.todoMeta) return;
+		const beforeMeta = cloneState(item.todoMeta);
+		const beforeHeight = item.height;
+		const beforeUpdatedAt = item.updatedAt;
+		const afterUpdatedAt = new Date().toISOString();
+		const afterMeta = change(cloneState(beforeMeta), afterUpdatedAt);
+		const afterHeight = getTodoListHeight(afterMeta.items.length);
+		applyTodoState(id, afterMeta, afterHeight, afterUpdatedAt);
+		history.push({
+			label,
+			undo: () => applyTodoState(id, beforeMeta, beforeHeight, beforeUpdatedAt),
+			redo: () => applyTodoState(id, afterMeta, afterHeight, afterUpdatedAt)
+		});
+	}
+
+	function handleUpdateTodoTitle(id: string, title: string) {
+		commitTodoChange(id, 'Rename to-do list', (meta) => ({ ...meta, title }));
+	}
+
+	function handleAddTodoEntry(id: string, text: string) {
+		const entry = createTodoEntry(text);
+		commitTodoChange(id, 'Add to-do item', (meta) => ({ ...meta, items: [...meta.items, entry] }));
+	}
+
+	function handleUpdateTodoEntry(id: string, todoId: string, text: string) {
+		commitTodoChange(id, 'Edit to-do item', (meta, timestamp) => ({
+			...meta,
+			items: meta.items.map((entry) => entry.id === todoId ? { ...entry, text, updatedAt: timestamp } : entry)
+		}));
+	}
+
+	function handleToggleTodoEntry(id: string, todoId: string) {
+		commitTodoChange(id, 'Toggle to-do item', (meta, timestamp) => ({
+			...meta,
+			items: meta.items.map((entry) => entry.id === todoId ? {
+				...entry,
+				completed: !entry.completed,
+				completedAt: entry.completed ? null : timestamp,
+				updatedAt: timestamp
+			} : entry)
+		}));
+	}
+
+	function handleDeleteTodoEntry(id: string, todoId: string) {
+		const item = activeItems.find((candidate) => candidate.id === id);
+		if (!item?.todoMeta) return;
+		const beforeMeta = cloneState(item.todoMeta);
+		const beforeHeight = item.height;
+		const beforeUpdatedAt = item.updatedAt;
+		const afterUpdatedAt = new Date().toISOString();
+		const afterMeta = { ...cloneState(beforeMeta), items: beforeMeta.items.filter((entry) => entry.id !== todoId) };
+		const afterHeight = getTodoListHeight(afterMeta.items.length);
+		const removedConnections = connectionActions.removeForTodo(id, todoId);
+		applyTodoState(id, afterMeta, afterHeight, afterUpdatedAt);
+		history.push({
+			label: 'Delete to-do item',
+			undo: () => { applyTodoState(id, beforeMeta, beforeHeight, beforeUpdatedAt); connectionActions.restore(removedConnections); },
+			redo: () => {
+				connectionActions.remove(new Set(removedConnections.map((connection) => connection.id)));
+				applyTodoState(id, afterMeta, afterHeight, afterUpdatedAt);
+			}
+		});
+	}
+
+	function handleCreateConnection(sourceItemId: string, sourceTodoId: string, targetItemId: string) {
+		const beforeCount = activeConnections.length;
+		const connection = connectionActions.connect(sourceItemId, sourceTodoId, targetItemId);
+		if (activeConnections.length === beforeCount) return;
+		history.push({
+			label: 'Connect to reference',
+			undo: () => { connectionActions.remove(new Set([connection.id])); },
+			redo: () => { connectionActions.restore([connection]); }
+		});
+	}
+
+	function handleDeleteConnection(id: string) {
+		const removed = connectionActions.remove(new Set([id]));
+		if (removed.length === 0) return;
+		history.push({
+			label: 'Remove connection',
+			undo: () => connectionActions.restore(removed),
+			redo: () => { connectionActions.remove(new Set([id])); }
+		});
+	}
+
+	function getCanvasCenter() {
+		return screenToCanvas(window.innerWidth / 2, window.innerHeight / 2, viewport.x, viewport.y, viewport.scale);
+	}
+
+	function getOpenCanvasPosition(width: number, height: number) {
+		const center = getCanvasCenter();
+		const base = { x: center.x - width / 2, y: center.y - height / 2 };
+		if (activeItems.length === 0) return base;
+
+		const gap = 56;
+		const rows = [0, 1, -1, 2, -2, 3, -3];
+		const candidates = [base];
+		for (let column = 1; column <= 6; column++) {
+			for (const row of rows) {
+				candidates.push({
+					x: base.x + column * (width + gap),
+					y: base.y + row * (height + gap)
+				});
+			}
+		}
+
+		return candidates.find((candidate) => !activeItems.some((item) =>
+			candidate.x < item.x + item.width + gap / 2 &&
+			candidate.x + width + gap / 2 > item.x &&
+			candidate.y < item.y + item.height + gap / 2 &&
+			candidate.y + height + gap / 2 > item.y
+		)) ?? candidates[candidates.length - 1];
+	}
+
+	function handleAddTodoList() {
+		const todoMeta: TodoListMeta = { title: 'To-do list', items: [createTodoEntry('New task')] };
+		const height = getTodoListHeight(todoMeta.items.length);
+		const position = getOpenCanvasPosition(360, height);
+		const id = actions.addItem({
+			type: 'todo', url: '', todoMeta,
+			x: position.x, y: position.y,
+			width: 360, height
+		});
+		const snapshot = cloneState(activeItems.find((item) => item.id === id));
+		selection.selectAll([id]);
+		if (snapshot) history.push({
+			label: 'Add to-do list',
+			undo: () => { actions.deleteItems(new Set([id])); },
+			redo: () => actions.restoreItems([snapshot])
+		});
+	}
+
+	function handleAddLink(url: string) {
+		const domain = getUrlDomain(url);
+		const position = getOpenCanvasPosition(420, 280);
+		const id = actions.addItem({
+			type: 'link', url,
+			linkMeta: { title: domain, domain },
+			x: position.x, y: position.y,
+			width: 420, height: 280
+		});
+		const snapshot = cloneState(activeItems.find((item) => item.id === id));
+		selection.selectAll([id]);
+		if (snapshot) history.push({
+			label: 'Add link',
+			undo: () => { actions.deleteItems(new Set([id])); },
+			redo: () => actions.restoreItems([snapshot])
 		});
 	}
 
@@ -880,6 +1074,7 @@
 			if (previousRole === 'host') {
 				sync.loadItems(projectStore.boardStore.items);
 				sync.loadGroups(projectStore.groupStore.groups);
+				sync.loadConnections(projectStore.connectionStore.connections);
 			}
 			sync.setLocalUser(myName, myColor);
 			sync.setLocalBoard(projectStore.activeBoard.id);
@@ -919,12 +1114,16 @@
 		switch (action) {
 			case 'delete':
 				if (targetId) {
+					const removedConnections = connectionActions.removeForItems(new Set([targetId]));
 					const deleted = actions.deleteItems(new Set([targetId]));
 					if (deleted.length) {
 						history.push({
 							label: 'Delete item',
-							undo: () => actions.restoreItems(deleted),
-							redo: () => { actions.deleteItems(new Set([targetId])); }
+							undo: () => { actions.restoreItems(deleted); connectionActions.restore(removedConnections); },
+							redo: () => {
+								connectionActions.remove(new Set(removedConnections.map((connection) => connection.id)));
+								actions.deleteItems(new Set([targetId]));
+							}
 						});
 					}
 					revokeObjectUrls(deleted.map((it) => it.url));
@@ -946,7 +1145,9 @@
 							x: item.x + 20,
 							y: item.y + 20,
 							width: item.width,
-							height: item.height
+							height: item.height,
+							todoMeta: item.todoMeta ? cloneState(item.todoMeta) : undefined,
+							linkMeta: item.linkMeta ? { ...item.linkMeta } : undefined
 						});
 						history.push({
 							label: 'Duplicate item',
@@ -955,7 +1156,9 @@
 								actions.addItem({
 									type: item.type, url: item.url,
 									x: item.x + 20, y: item.y + 20,
-									width: item.width, height: item.height
+									width: item.width, height: item.height,
+									todoMeta: item.todoMeta ? cloneState(item.todoMeta) : undefined,
+									linkMeta: item.linkMeta ? { ...item.linkMeta } : undefined
 								});
 							}
 						});
@@ -975,7 +1178,9 @@
 						x: item.x + 20,
 						y: item.y + 20,
 						width: item.width,
-						height: item.height
+						height: item.height,
+						todoMeta: item.todoMeta ? cloneState(item.todoMeta) : undefined,
+						linkMeta: item.linkMeta ? { ...item.linkMeta } : undefined
 					});
 					newIds.push(newId);
 				}
@@ -1006,6 +1211,19 @@
 						});
 					}
 				});
+				break;
+			}
+
+			case 'addTodo':
+				handleAddTodoList();
+				break;
+
+			case 'addLink': {
+				const url = prompt('Paste a link:');
+				if (url?.trim()) {
+					const normalized = /^https?:\/\//i.test(url.trim()) ? url.trim() : `https://${url.trim()}`;
+					try { new URL(normalized); handleAddLink(normalized); } catch { /* invalid URL: leave board unchanged */ }
+				}
 				break;
 			}
 
@@ -1264,12 +1482,7 @@
 							y: canvasCenter.y - 100
 						});
 					} else if (/^https?:\/\//i.test(trimmed)) {
-						actions.addItem({
-							type: 'image',
-							url: trimmed,
-							x: canvasCenter.x - 150,
-							y: canvasCenter.y - 100
-						});
+						handleAddLink(trimmed);
 					} else {
 						actions.addItem({
 							type: 'text',
@@ -1305,6 +1518,7 @@
 
 	<Canvas
 		items={activeItems}
+		connections={activeConnections}
 		groups={activeGroups}
 		viewportTransform={viewport.transform}
 		viewportX={viewport.x}
@@ -1331,11 +1545,20 @@
 		onMediaLoad={handleMediaLoad}
 		onUpdateVideoMeta={handleUpdateVideoMeta}
 		onUpdateText={handleUpdateText}
+		onUpdateTodoTitle={handleUpdateTodoTitle}
+		onAddTodoEntry={handleAddTodoEntry}
+		onUpdateTodoEntry={handleUpdateTodoEntry}
+		onToggleTodoEntry={handleToggleTodoEntry}
+		onDeleteTodoEntry={handleDeleteTodoEntry}
+		onCreateConnection={handleCreateConnection}
+		onDeleteConnection={handleDeleteConnection}
 		onMoveGroup={handleMoveGroup}
 		onSelectGroup={handleSelectGroup}
 		onContextMenu={handleContextMenu}
 		onMarqueeSelect={handleMarqueeSelect}
 	/>
+
+	<QuickAdd onAddTodo={handleAddTodoList} onAddLink={handleAddLink} />
 
 	{#if contextMenu.visible}
 		<ContextMenu
@@ -1472,4 +1695,3 @@
 		filter: drop-shadow(0 2px 8px rgba(0, 0, 0, 0.3));
 	}
 </style>
-

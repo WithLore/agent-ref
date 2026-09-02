@@ -46,7 +46,7 @@ fn get_tools() -> Vec<ToolDef> {
     vec![
         ToolDef {
             name: "list_boards",
-            description: "List all boards in an AgentRef project with item/group counts and type breakdown.",
+            description: "List all boards in an AgentRef project with item, group, connection, and type counts.",
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {
@@ -57,7 +57,7 @@ fn get_tools() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "get_board",
-            description: "Get full details of a specific board including all items and groups.",
+            description: "Get full details of a board including timestamped to-do rows, links, media, groups, and connections.",
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {
@@ -100,7 +100,7 @@ fn get_tools() -> Vec<ToolDef> {
                     "tag": { "type": "string", "description": "Filter by tag (case-insensitive substring)." },
                     "rating": { "type": "number", "description": "Exact rating: 0=unrated, 1=trash, 2=keep, 3=star." },
                     "minRating": { "type": "number", "description": "Minimum rating (inclusive)." },
-                    "type": { "type": "string", "enum": ["image", "video", "youtube", "text"], "description": "Filter by item type." },
+                    "type": { "type": "string", "enum": ["image", "video", "youtube", "text", "todo", "link"], "description": "Filter by item type." },
                     "groupLabel": { "type": "string", "description": "Filter by group label (case-insensitive substring)." },
                     "boardId": { "type": "string", "description": "Limit search to a specific board." },
                     "query": { "type": "string", "description": "Free-text search across tags, group labels, and text content." }
@@ -111,7 +111,7 @@ fn get_tools() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "add_items",
-            description: "Add one or more items (images, text notes, videos, YouTube embeds) to a board.",
+            description: "Add images, notes, videos, YouTube embeds, timestamped to-do lists, or web links to a board.",
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {
@@ -122,8 +122,11 @@ fn get_tools() -> Vec<ToolDef> {
                         "items": {
                             "type": "object",
                             "properties": {
-                                "type": { "type": "string", "enum": ["image", "video", "youtube", "text"] },
+                                "type": { "type": "string", "enum": ["image", "video", "youtube", "text", "todo", "link"] },
                                 "url": { "type": "string", "description": "URL, file path, or text content." },
+                                "title": { "type": "string", "description": "Title for a to-do list or link card." },
+                                "domain": { "type": "string", "description": "Display domain for a link card." },
+                                "todoItems": { "type": "array", "items": { "type": "string" }, "description": "Initial timestamped rows for a to-do list." },
                                 "x": { "type": "number" },
                                 "y": { "type": "number" },
                                 "width": { "type": "number" },
@@ -131,7 +134,7 @@ fn get_tools() -> Vec<ToolDef> {
                                 "tags": { "type": "array", "items": { "type": "string" } },
                                 "rating": { "type": "number", "minimum": 0, "maximum": 3 }
                             },
-                            "required": ["type", "url"]
+                            "required": ["type"]
                         },
                         "minItems": 1
                     }
@@ -210,6 +213,64 @@ fn get_tools() -> Vec<ToolDef> {
             }),
             endpoint: "/mcp/delete_items",
         },
+        ToolDef {
+            name: "update_todo_list",
+            description: "Rename a to-do list or add, edit, complete, reopen, and delete timestamped rows. Original createdAt values are preserved permanently.",
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "projectPath": { "type": "string" },
+                    "boardId": { "type": "string" },
+                    "itemId": { "type": "string", "description": "Board item ID of the to-do list." },
+                    "title": { "type": "string", "description": "Optional new list title." },
+                    "operations": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "action": { "type": "string", "enum": ["add", "edit", "complete", "delete"] },
+                                "todoId": { "type": "string", "description": "Required except when adding." },
+                                "text": { "type": "string", "description": "Text for add or edit." },
+                                "completed": { "type": "boolean", "description": "Explicit completion state; omit to toggle." }
+                            },
+                            "required": ["action"]
+                        }
+                    }
+                },
+                "required": ["projectPath", "boardId", "itemId"]
+            }),
+            endpoint: "/mcp/update_todo_list",
+        },
+        ToolDef {
+            name: "connect_todo_item",
+            description: "Connect one timestamped to-do row to a media or link item. A row can connect to any number of distinct targets.",
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "projectPath": { "type": "string" },
+                    "boardId": { "type": "string" },
+                    "sourceItemId": { "type": "string", "description": "Board item ID of the to-do list." },
+                    "sourceTodoId": { "type": "string", "description": "ID of the row inside todoMeta.items." },
+                    "targetItemId": { "type": "string", "description": "Board item ID of the media or link target." }
+                },
+                "required": ["projectPath", "boardId", "sourceItemId", "sourceTodoId", "targetItemId"]
+            }),
+            endpoint: "/mcp/connect_todo_item",
+        },
+        ToolDef {
+            name: "delete_connections",
+            description: "Remove one or more saved board connections by ID.",
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "projectPath": { "type": "string" },
+                    "boardId": { "type": "string" },
+                    "connectionIds": { "type": "array", "items": { "type": "string" }, "minItems": 1 }
+                },
+                "required": ["projectPath", "boardId", "connectionIds"]
+            }),
+            endpoint: "/mcp/delete_connections",
+        },
     ]
 }
 
@@ -281,7 +342,7 @@ pub fn run_mcp_server() {
                     },
                     "serverInfo": {
                         "name": "agentref",
-                        "version": "0.2.0"
+                        "version": "0.3.0"
                     }
                 }))
             }

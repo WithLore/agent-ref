@@ -14,7 +14,9 @@ function makeItem(id: string, x: number, y: number, w: number, h: number): Board
 		zIndex: 0,
 		rotation: 0,
 		tags: [],
-		rating: 0
+		rating: 0,
+		createdAt: '2026-01-01T00:00:00.000Z',
+		updatedAt: '2026-01-01T00:00:00.000Z'
 	};
 }
 

@@ -59,7 +59,9 @@
 		{ label: 'Save As…', icon: icons.save, action: 'saveAs', hint: 'Ctrl+Shift+S' },
 		{ label: 'Open Project…', icon: icons.folder, action: 'open', hint: 'Ctrl+O' },
 		// Canvas editing
-		{ label: 'Add Text Note', icon: icons.text, action: 'addText', separator: true },
+		{ label: 'Add To-do List', icon: icons.todo, action: 'addTodo', separator: true },
+		{ label: 'Add Link…', icon: icons.link, action: 'addLink' },
+		{ label: 'Add Text Note', icon: icons.text, action: 'addText' },
 		{ label: 'Paste', icon: icons.paste, action: 'paste', hint: 'Ctrl+V' },
 		// Package operations (with media bundling)
 		{ label: 'Export with Media…', icon: icons.package, action: 'exportPackage', separator: true, hint: 'Ctrl+Shift+E' },

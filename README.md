@@ -2,7 +2,7 @@
 
 A PureRef-like infinite canvas reference board — built as a desktop app with AI agent integration.
 
-Drop images, videos, YouTube links, and text notes onto an infinite canvas. Organize with groups and multiple boards. Save portable packages to share with colleagues. Expose your boards to AI agents via the built-in MCP server.
+Drop images, videos, links, timestamped to-do lists, and text notes onto an infinite canvas. Connect individual tasks to the references they depend on, organize everything across boards, and let Codex understand and update the same project through the built-in MCP server.
 
 ## Features
 
@@ -18,7 +18,15 @@ Drop images, videos, YouTube links, and text notes onto an infinite canvas. Orga
 - **Images** — PNG, JPG, GIF, WebP, SVG, AVIF with lazy loading
 - **Videos** — MP4, WebM, OGG with autoplay loop and loop region editor
 - **YouTube** — Paste any YouTube URL, lazy-loads iframe on click
+- **Links** — Clean, safe preview cards for ordinary web links
+- **To-do lists** — Timestamped lists and rows with completion history
 - **Text** — Double-click to edit inline notes
+
+### Task Connections
+- Add a to-do list from the compact canvas toolbar
+- Drag from the dot beside any task to connect it to media or link cards
+- Connect one task to as many references as needed
+- Select a connection line to remove it, with undo/redo support
 
 ### Organization
 - **Groups** — Select items and group them into labeled containers with colored borders
@@ -115,6 +123,9 @@ AgentRef includes an MCP (Model Context Protocol) server that lets AI agents que
 | `move_items` | Move existing items by delta |
 | `tag_items` | Add or remove tags on items |
 | `delete_items` | Delete items by ID |
+| `update_todo_list` | Rename a list or add, edit, complete, reopen, and delete timestamped rows |
+| `connect_todo_item` | Connect one to-do row to any number of media or link cards |
+| `delete_connections` | Remove one or more task-reference connections |
 
 ### How It Works
 
@@ -234,4 +245,3 @@ agent-ref/
 ## License
 
 Private — not yet licensed for distribution.
-

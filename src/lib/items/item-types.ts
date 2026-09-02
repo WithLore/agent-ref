@@ -1,4 +1,31 @@
-export type ItemType = 'image' | 'video' | 'youtube' | 'text';
+export type ItemType = 'image' | 'video' | 'youtube' | 'text' | 'todo' | 'link';
+
+export interface TodoEntry {
+	id: string;
+	text: string;
+	createdAt: string;
+	updatedAt: string;
+	completed: boolean;
+	completedAt: string | null;
+}
+
+export interface TodoListMeta {
+	title: string;
+	items: TodoEntry[];
+}
+
+export interface LinkMeta {
+	title: string;
+	domain: string;
+}
+
+export interface BoardConnection {
+	id: string;
+	sourceItemId: string;
+	sourceTodoId: string;
+	targetItemId: string;
+	createdAt: string;
+}
 
 export interface VideoMeta {
 	loopStart: number; // percentage 0-100
@@ -18,7 +45,11 @@ export interface BoardItem {
 	rotation: number;
 	tags: string[];
 	rating: number; // 0=unrated, 1=trash, 2=keep, 3=star
+	createdAt: string; // immutable creation timestamp
+	updatedAt: string;
 	videoMeta?: VideoMeta;
+	todoMeta?: TodoListMeta;
+	linkMeta?: LinkMeta;
 	groupId?: string; // references GroupData.id if this item belongs to a group
 }
 
@@ -56,6 +87,7 @@ export interface BoardData {
 	name: string;
 	items: BoardItem[];
 	groups: GroupData[];
+	connections: BoardConnection[];
 	viewport: { x: number; y: number; scale: number };
 	createdAt: string;
 	modifiedAt: string;
@@ -78,6 +110,7 @@ export interface ProjectData {
 export function createItem(
 	overrides: Partial<BoardItem> & Pick<BoardItem, 'type' | 'url'>
 ): BoardItem {
+	const now = new Date().toISOString();
 	const base: BoardItem = {
 		id: crypto.randomUUID(),
 		x: 0,
@@ -88,6 +121,8 @@ export function createItem(
 		rotation: 0,
 		tags: [],
 		rating: 0,
+		createdAt: now,
+		updatedAt: now,
 		...overrides
 	};
 
@@ -95,8 +130,34 @@ export function createItem(
 	if ((base.type === 'video' || base.type === 'youtube') && !base.videoMeta) {
 		base.videoMeta = { loopStart: 0, loopEnd: 100, muted: true };
 	}
+	if (base.type === 'todo' && !base.todoMeta) {
+		base.todoMeta = { title: 'To-do list', items: [createTodoEntry('New task')] };
+	}
+	if (base.type === 'link' && !base.linkMeta) {
+		base.linkMeta = { title: base.url, domain: getUrlDomain(base.url) };
+	}
 
 	return base;
+}
+
+export function createTodoEntry(text = ''): TodoEntry {
+	const now = new Date().toISOString();
+	return {
+		id: crypto.randomUUID(),
+		text,
+		createdAt: now,
+		updatedAt: now,
+		completed: false,
+		completedAt: null
+	};
+}
+
+export function getUrlDomain(url: string): string {
+	try {
+		return new URL(url).hostname.replace(/^www\./, '');
+	} catch {
+		return url;
+	}
 }
 
 // --- Board factory ---
@@ -108,6 +169,7 @@ export function createBoard(name = 'Board 1'): BoardData {
 		name,
 		items: [],
 		groups: [],
+		connections: [],
 		viewport: { x: 0, y: 0, scale: 1 },
 		createdAt: now,
 		modifiedAt: now
@@ -122,7 +184,7 @@ export function createProject(name = 'Untitled Project'): ProjectData {
 	return {
 		id: crypto.randomUUID(),
 		name,
-		version: 1,
+		version: 2,
 		createdAt: now,
 		modifiedAt: now,
 		boards: [board],

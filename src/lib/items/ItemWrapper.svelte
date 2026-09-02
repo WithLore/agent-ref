@@ -10,6 +10,8 @@
 		selected = false,
 		spaceHeld = false,
 		locked = false,
+		fixedSize = false,
+		connectionTarget = false,
 		onSelect,
 		onMoveStart,
 		onMove,
@@ -29,6 +31,8 @@
 		selected?: boolean;
 		spaceHeld?: boolean;
 		locked?: boolean;
+		fixedSize?: boolean;
+		connectionTarget?: boolean;
 		onSelect: (id: string, multi: boolean) => void;
 		onMoveStart?: (id: string) => void;
 		onMove: (id: string, dx: number, dy: number) => void;
@@ -311,6 +315,7 @@
 	class="item-wrapper"
 	class:selected
 	class:dragging
+	class:connection-target={connectionTarget}
 	style:transform="translate({item.x}px, {item.y}px) rotate({item.rotation}deg)"
 	style:width="{item.width}px"
 	style:height="{item.height}px"
@@ -339,7 +344,7 @@
 		</div>
 	{/if}
 
-	{#if selected}
+	{#if selected && !fixedSize}
 		<!-- Rotation handle -->
 		<div class="rotation-line"></div>
 		<!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -372,6 +377,11 @@
 	.item-wrapper.selected {
 		outline: calc(1.5px * var(--inv-scale)) solid var(--selection, #fff);
 		outline-offset: calc(2px * var(--inv-scale));
+	}
+
+	.item-wrapper.connection-target {
+		outline: calc(2px * var(--inv-scale)) solid var(--selection, #fff);
+		outline-offset: calc(4px * var(--inv-scale));
 	}
 
 	/* --- Badges --- */

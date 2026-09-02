@@ -2,13 +2,13 @@
  * Serialization — JSON serialize/deserialize with validation and migration.
  */
 
-import type { ProjectData, BoardItem } from '$lib/items/item-types.js';
+import type { ProjectData, BoardItem, TodoEntry } from '$lib/items/item-types.js';
 
-const CURRENT_VERSION = 1;
+const CURRENT_VERSION = 2;
 export const FILE_EXTENSION = '.agentref';
 
 /** Valid item types that the app understands. */
-const VALID_ITEM_TYPES = new Set(['image', 'video', 'youtube', 'text']);
+const VALID_ITEM_TYPES = new Set(['image', 'video', 'youtube', 'text', 'todo', 'link']);
 
 /**
  * Check if a raw object looks like a valid BoardItem.
@@ -89,7 +89,18 @@ export function deserializeProject(json: string): ProjectData {
 function migrateProject(data: ProjectData, fromVersion: number): ProjectData {
 	// v0 → v1: no structural changes, just stamp the version
 	if (fromVersion < 1) {
-		data.version = CURRENT_VERSION;
+		data.version = 1;
+	}
+	if (fromVersion < 2) {
+		const fallback = data.createdAt || new Date().toISOString();
+		for (const board of data.boards ?? []) {
+			board.connections = [];
+			for (const item of board.items ?? []) {
+				item.createdAt = item.createdAt || board.createdAt || fallback;
+				item.updatedAt = item.updatedAt || item.createdAt;
+			}
+		}
+		data.version = 2;
 	}
 	return data;
 }
@@ -107,6 +118,7 @@ function validateProject(data: ProjectData): ProjectData {
 	for (const board of data.boards) {
 		if (!Array.isArray(board.items)) board.items = [];
 		if (!Array.isArray(board.groups)) board.groups = [];
+		if (!Array.isArray(board.connections)) board.connections = [];
 		if (!board.viewport) board.viewport = { x: 0, y: 0, scale: 1 };
 		if (!board.createdAt) board.createdAt = new Date().toISOString();
 		if (!board.modifiedAt) board.modifiedAt = board.createdAt;
@@ -124,7 +136,36 @@ function validateProject(data: ProjectData): ProjectData {
 		for (const item of board.items) {
 			if (!Array.isArray(item.tags)) item.tags = [];
 			if (typeof item.rating !== 'number') item.rating = 0;
+			if (!item.createdAt) item.createdAt = board.createdAt;
+			if (!item.updatedAt) item.updatedAt = item.createdAt;
+			if (item.type === 'todo') {
+				if (!item.todoMeta || !Array.isArray(item.todoMeta.items)) {
+					item.todoMeta = { title: item.url || 'To-do list', items: [] };
+				}
+				item.todoMeta.items = item.todoMeta.items.filter((entry: TodoEntry) =>
+					Boolean(entry && typeof entry.id === 'string' && typeof entry.text === 'string')
+				);
+				for (const entry of item.todoMeta.items) {
+					entry.createdAt ||= item.createdAt;
+					entry.updatedAt ||= entry.createdAt;
+					entry.completed = Boolean(entry.completed);
+					entry.completedAt = entry.completed ? (entry.completedAt || entry.updatedAt) : null;
+				}
+			}
 		}
+
+		const itemIds = new Set(board.items.map((item) => item.id));
+		const todoIds = new Map(board.items
+			.filter((item) => item.type === 'todo')
+			.map((item) => [item.id, new Set(item.todoMeta?.items.map((entry) => entry.id) ?? [])]));
+		board.connections = board.connections.filter((connection) =>
+			Boolean(
+				connection && typeof connection.id === 'string' &&
+				itemIds.has(connection.sourceItemId) && itemIds.has(connection.targetItemId) &&
+				todoIds.get(connection.sourceItemId)?.has(connection.sourceTodoId) &&
+				typeof connection.createdAt === 'string'
+			)
+		);
 	}
 
 	return data;

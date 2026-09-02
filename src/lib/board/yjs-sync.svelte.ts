@@ -17,7 +17,7 @@
 import * as Y from 'yjs';
 // @ts-ignore — y-webrtc has no types
 import { WebrtcProvider } from 'y-webrtc';
-import type { BoardItem, GroupData } from '$lib/items/item-types.js';
+import type { BoardConnection, BoardItem, GroupData } from '$lib/items/item-types.js';
 
 // --- Types ---
 
@@ -38,11 +38,15 @@ export interface CollabStatus {
 
 const ITEM_FIELDS: (keyof BoardItem)[] = [
 	'id', 'type', 'url', 'x', 'y', 'width', 'height',
-	'zIndex', 'rotation', 'tags', 'rating', 'groupId'
+	'zIndex', 'rotation', 'tags', 'rating', 'groupId', 'createdAt', 'updatedAt'
 ];
 
 const GROUP_FIELDS: (keyof GroupData)[] = [
 	'id', 'label', 'color', 'x', 'y', 'width', 'height', 'zIndex', 'locked'
+];
+
+const CONNECTION_FIELDS: (keyof BoardConnection)[] = [
+	'id', 'sourceItemId', 'sourceTodoId', 'targetItemId', 'createdAt'
 ];
 
 function itemToYMap(item: BoardItem, doc: Y.Doc): Y.Map<unknown> {
@@ -68,7 +72,14 @@ function itemToYMap(item: BoardItem, doc: Y.Doc): Y.Map<unknown> {
 		vm.set('muted', item.videoMeta.muted);
 		ymap.set('videoMeta', vm);
 	}
+	if (item.todoMeta) ymap.set('todoMeta', JSON.stringify(item.todoMeta));
+	if (item.linkMeta) ymap.set('linkMeta', JSON.stringify(item.linkMeta));
 	return ymap;
+}
+
+function parseJsonField<T>(value: unknown): T | undefined {
+	if (typeof value !== 'string') return undefined;
+	try { return JSON.parse(value) as T; } catch { return undefined; }
 }
 
 function ymapToItem(ymap: Y.Map<unknown>): BoardItem {
@@ -102,8 +113,28 @@ function ymapToItem(ymap: Y.Map<unknown>): BoardItem {
 		rotation: (ymap.get('rotation') as number) ?? 0,
 		tags,
 		rating: (ymap.get('rating') as number) ?? 0,
+		createdAt: (ymap.get('createdAt') as string) ?? new Date().toISOString(),
+		updatedAt: (ymap.get('updatedAt') as string) ?? (ymap.get('createdAt') as string) ?? new Date().toISOString(),
 		videoMeta,
+		todoMeta: parseJsonField<BoardItem['todoMeta']>(ymap.get('todoMeta')),
+		linkMeta: parseJsonField<BoardItem['linkMeta']>(ymap.get('linkMeta')),
 		groupId: ymap.get('groupId') as string | undefined
+	};
+}
+
+function connectionToYMap(connection: BoardConnection): Y.Map<unknown> {
+	const ymap = new Y.Map<unknown>();
+	for (const key of CONNECTION_FIELDS) ymap.set(key, connection[key]);
+	return ymap;
+}
+
+function ymapToConnection(ymap: Y.Map<unknown>): BoardConnection {
+	return {
+		id: ymap.get('id') as string,
+		sourceItemId: ymap.get('sourceItemId') as string,
+		sourceTodoId: ymap.get('sourceTodoId') as string,
+		targetItemId: ymap.get('targetItemId') as string,
+		createdAt: ymap.get('createdAt') as string
 	};
 }
 
@@ -140,10 +171,12 @@ export function createYjsSync(roomId: string, boardId: string) {
 	// Shared types: items and groups per board
 	const yitems = ydoc.getArray<Y.Map<unknown>>(`board-${boardId}-items`);
 	const ygroups = ydoc.getArray<Y.Map<unknown>>(`board-${boardId}-groups`);
+	const yconnections = ydoc.getArray<Y.Map<unknown>>(`board-${boardId}-connections`);
 
 	// Reactive Svelte state mirroring the CRDT
 	let items = $state<BoardItem[]>(readAllItems());
 	let groups = $state<GroupData[]>(readAllGroups());
+	let connections = $state<BoardConnection[]>(readAllConnections());
 	let connected = $state(false);
 	let peerCount = $state(0);
 
@@ -160,6 +193,10 @@ export function createYjsSync(roomId: string, boardId: string) {
 		return ygroups.toArray().map(ymapToGroup);
 	}
 
+	function readAllConnections(): BoardConnection[] {
+		return yconnections.toArray().map(ymapToConnection);
+	}
+
 	// --- Observe CRDT changes → update Svelte $state ---
 
 	yitems.observeDeep(() => {
@@ -170,6 +207,11 @@ export function createYjsSync(roomId: string, boardId: string) {
 	ygroups.observeDeep(() => {
 		if (suppressObserver) return;
 		groups = readAllGroups();
+	});
+
+	yconnections.observeDeep(() => {
+		if (suppressObserver) return;
+		connections = readAllConnections();
 	});
 
 	// --- WebRTC provider ---
@@ -337,6 +379,20 @@ export function createYjsSync(roomId: string, boardId: string) {
 		}
 	};
 
+	const connectionStore = {
+		get connections(): BoardConnection[] { return connections; },
+		updateConnections(fn: (connections: BoardConnection[]) => BoardConnection[]) {
+			const next = fn(readAllConnections());
+			ydoc.transact(() => {
+				suppressObserver = true;
+				yconnections.delete(0, yconnections.length);
+				if (next.length > 0) yconnections.push(next.map(connectionToYMap));
+				suppressObserver = false;
+			}, 'local');
+			connections = readAllConnections();
+		}
+	};
+
 	// --- Atomic update (items + groups in one transaction) ---
 
 	function updateBoardAndGroups(
@@ -396,6 +452,15 @@ export function createYjsSync(roomId: string, boardId: string) {
 			if (vm.get('loopEnd') !== item.videoMeta.loopEnd) vm.set('loopEnd', item.videoMeta.loopEnd);
 			if (vm.get('muted') !== item.videoMeta.muted) vm.set('muted', item.videoMeta.muted);
 		}
+
+		const todoMeta = item.todoMeta ? JSON.stringify(item.todoMeta) : undefined;
+		if (todoMeta !== ymap.get('todoMeta')) {
+			if (todoMeta) ymap.set('todoMeta', todoMeta); else ymap.delete('todoMeta');
+		}
+		const linkMeta = item.linkMeta ? JSON.stringify(item.linkMeta) : undefined;
+		if (linkMeta !== ymap.get('linkMeta')) {
+			if (linkMeta) ymap.set('linkMeta', linkMeta); else ymap.delete('linkMeta');
+		}
 	}
 
 	function applyGroupDiff(ymap: Y.Map<unknown>, group: GroupData) {
@@ -432,9 +497,19 @@ export function createYjsSync(roomId: string, boardId: string) {
 		groups = readAllGroups();
 	}
 
+	function loadConnections(boardConnections: BoardConnection[]) {
+		ydoc.transact(() => {
+			suppressObserver = true;
+			yconnections.delete(0, yconnections.length);
+			if (boardConnections.length > 0) yconnections.push(boardConnections.map(connectionToYMap));
+			suppressObserver = false;
+		}, 'local');
+		connections = readAllConnections();
+	}
+
 	// --- Undo Manager ---
 
-	const undoManager = new Y.UndoManager([yitems, ygroups], {
+	const undoManager = new Y.UndoManager([yitems, ygroups, yconnections], {
 		captureTimeout: 300,
 		trackedOrigins: new Set(['local'])
 	});
@@ -465,9 +540,11 @@ export function createYjsSync(roomId: string, boardId: string) {
 		undoManager,
 		boardStore,
 		groupStore,
+		connectionStore,
 		updateBoardAndGroups,
 		loadItems,
 		loadGroups,
+		loadConnections,
 		setLocalUser,
 		setLocalCursor,
 		setLocalBoard,

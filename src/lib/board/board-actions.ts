@@ -5,7 +5,7 @@
  * Phase 3: swaps to Yjs ydoc.transact() calls — same interface.
  */
 
-import type { BoardItem, ItemType, VideoMeta } from '$lib/items/item-types.js';
+import type { BoardItem, ItemType, LinkMeta, TodoListMeta, VideoMeta } from '$lib/items/item-types.js';
 import { createItem } from '$lib/items/item-types.js';
 
 export interface BoardStore {
@@ -21,6 +21,10 @@ export function createBoardActions(store: BoardStore) {
 		y: number;
 		width?: number;
 		height?: number;
+		todoMeta?: TodoListMeta;
+		linkMeta?: LinkMeta;
+		createdAt?: string;
+		updatedAt?: string;
 	}): string {
 		const maxZ = store.items.reduce((max, it) => Math.max(max, it.zIndex), -1);
 		const item = createItem({
@@ -34,14 +38,16 @@ export function createBoardActions(store: BoardStore) {
 	}
 
 	function moveItem(id: string, dx: number, dy: number) {
+		const now = new Date().toISOString();
 		store.update((items) =>
-			items.map((it) => (it.id === id ? { ...it, x: it.x + dx, y: it.y + dy } : it))
+			items.map((it) => (it.id === id ? { ...it, x: it.x + dx, y: it.y + dy, updatedAt: now } : it))
 		);
 	}
 
 	function moveItems(ids: Set<string>, dx: number, dy: number) {
+		const now = new Date().toISOString();
 		store.update((items) =>
-			items.map((it) => (ids.has(it.id) ? { ...it, x: it.x + dx, y: it.y + dy } : it))
+			items.map((it) => (ids.has(it.id) ? { ...it, x: it.x + dx, y: it.y + dy, updatedAt: now } : it))
 		);
 	}
 
@@ -120,8 +126,21 @@ export function createBoardActions(store: BoardStore) {
 	}
 
 	function updateText(id: string, text: string) {
+		const now = new Date().toISOString();
 		store.update((items) =>
-			items.map((it) => (it.id === id ? { ...it, url: text } : it))
+			items.map((it) => (it.id === id ? { ...it, url: text, updatedAt: now } : it))
+		);
+	}
+
+	function setTodoMeta(id: string, todoMeta: TodoListMeta, updatedAt = new Date().toISOString()) {
+		store.update((items) =>
+			items.map((it) => (it.id === id ? { ...it, todoMeta: structuredClone(todoMeta), updatedAt } : it))
+		);
+	}
+
+	function setLinkMeta(id: string, linkMeta: LinkMeta, updatedAt = new Date().toISOString()) {
+		store.update((items) =>
+			items.map((it) => (it.id === id ? { ...it, linkMeta: { ...linkMeta }, updatedAt } : it))
 		);
 	}
 
@@ -168,6 +187,8 @@ export function createBoardActions(store: BoardStore) {
 		rateItem,
 		updateVideoMeta,
 		updateText,
+		setTodoMeta,
+		setLinkMeta,
 		setItemPositions,
 		rotateItem,
 		removeTag,

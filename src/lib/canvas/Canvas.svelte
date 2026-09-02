@@ -1,17 +1,23 @@
 <script lang="ts">
-	import type { BoardItem, GroupData, VideoMeta } from '$lib/items/item-types.js';
+	import { onDestroy } from 'svelte';
+	import type { BoardConnection, BoardItem, GroupData, VideoMeta } from '$lib/items/item-types.js';
 	import ItemWrapper from '$lib/items/ItemWrapper.svelte';
 	import ImageItem from '$lib/items/ImageItem.svelte';
 	import VideoItem from '$lib/items/VideoItem.svelte';
 	import YouTubeItem from '$lib/items/YouTubeItem.svelte';
 	import TextItem from '$lib/items/TextItem.svelte';
+	import TodoItem from '$lib/items/TodoItem.svelte';
+	import LinkItem from '$lib/items/LinkItem.svelte';
+	import ConnectionLayer from '$lib/canvas/ConnectionLayer.svelte';
 	import GroupFrame from '$lib/canvas/GroupFrame.svelte';
 	import MarqueeRect from '$lib/canvas/MarqueeRect.svelte';
 	import { screenToCanvas } from '$lib/canvas/coordinates.js';
 	import { icons } from '$lib/ui/icons.js';
+	import { getTodoSourcePoint } from '$lib/board/connection-geometry.js';
 
 	let {
 		items,
+		connections = [],
 		groups = [],
 		viewportTransform,
 		viewportX,
@@ -38,12 +44,20 @@
 		onMediaLoad,
 		onUpdateVideoMeta,
 		onUpdateText,
+		onUpdateTodoTitle,
+		onAddTodoEntry,
+		onUpdateTodoEntry,
+		onToggleTodoEntry,
+		onDeleteTodoEntry,
+		onCreateConnection,
+		onDeleteConnection,
 		onMoveGroup,
 		onSelectGroup,
 		onContextMenu,
 		onMarqueeSelect
 	}: {
 		items: BoardItem[];
+		connections?: BoardConnection[];
 		groups?: GroupData[];
 		viewportTransform: string;
 		viewportX: number;
@@ -70,6 +84,13 @@
 		onMediaLoad: (id: string, naturalWidth: number, naturalHeight: number) => void;
 		onUpdateVideoMeta: (id: string, meta: Partial<VideoMeta>) => void;
 		onUpdateText: (id: string, text: string) => void;
+		onUpdateTodoTitle: (id: string, title: string) => void;
+		onAddTodoEntry: (id: string, text: string) => void;
+		onUpdateTodoEntry: (id: string, todoId: string, text: string) => void;
+		onToggleTodoEntry: (id: string, todoId: string) => void;
+		onDeleteTodoEntry: (id: string, todoId: string) => void;
+		onCreateConnection: (sourceItemId: string, sourceTodoId: string, targetItemId: string) => void;
+		onDeleteConnection: (id: string) => void;
 		onMoveGroup?: (id: string, dx: number, dy: number) => void;
 		onSelectGroup?: (id: string, multi: boolean) => void;
 		onContextMenu?: (x: number, y: number, target: string, id?: string) => void;
@@ -79,6 +100,14 @@
 	let canvasRoot: HTMLDivElement;
 	let isPanning = $state(false);
 	let spaceHeld = $state(false);
+	let selectedConnectionId = $state<string | null>(null);
+	let connectionDraft = $state<{
+		sourceItemId: string;
+		sourceTodoId: string;
+		source: { x: number; y: number };
+		end: { x: number; y: number };
+		targetItemId: string | null;
+	} | null>(null);
 
 	// --- Text editing state (managed here because ItemWrapper steals dblclick via pointer capture) ---
 	let editingItemId = $state<string | null>(null);
@@ -161,6 +190,12 @@
 			spaceHeld = true;
 		}
 		if ((e.key === 'Delete' || e.key === 'Backspace') && !e.ctrlKey && !e.metaKey && !e.altKey) {
+			if (selectedConnectionId) {
+				e.preventDefault();
+				onDeleteConnection(selectedConnectionId);
+				selectedConnectionId = null;
+				return;
+			}
 			onDeleteSelected();
 		}
 	}
@@ -182,6 +217,7 @@
 			canvasRoot.setPointerCapture(e.pointerId);
 		} else if (e.button === 0) {
 			if (e.target === canvasRoot || e.target === canvasRoot.querySelector('.canvas-layer')) {
+				selectedConnectionId = null;
 				// Start marquee selection
 				marqueeAdditive = e.shiftKey;
 				if (!e.shiftKey) onClearSelection();
@@ -263,6 +299,7 @@
 
 	// --- Handle select + bring to front ---
 	function handleSelect(id: string, multi: boolean) {
+		selectedConnectionId = null;
 		const wasSelected = selectedIds.has(id);
 		onSelect(id, multi);
 		// Only bring to front on initial selection, not re-clicks
@@ -301,6 +338,55 @@
 	function handleGroupContextMenu(id: string, x: number, y: number) {
 		onContextMenu?.(x, y, 'group', id);
 	}
+
+	function eligibleConnectionTarget(item: BoardItem): boolean {
+		return item.type === 'image' || item.type === 'video' || item.type === 'youtube' || item.type === 'link';
+	}
+
+	function findConnectionTarget(point: { x: number; y: number }, sourceItemId: string): BoardItem | null {
+		return [...items]
+			.sort((a, b) => b.zIndex - a.zIndex)
+			.find((item) => item.id !== sourceItemId && eligibleConnectionTarget(item) &&
+				point.x >= item.x && point.x <= item.x + item.width &&
+				point.y >= item.y && point.y <= item.y + item.height) ?? null;
+	}
+
+	function handleStartConnection(sourceItemId: string, sourceTodoId: string, event: PointerEvent) {
+		event.preventDefault();
+		event.stopPropagation();
+		const sourceItem = items.find((item) => item.id === sourceItemId);
+		const source = sourceItem ? getTodoSourcePoint(sourceItem, sourceTodoId) : null;
+		if (!source) return;
+		selectedConnectionId = null;
+		connectionDraft = { sourceItemId, sourceTodoId, source, end: source, targetItemId: null };
+		window.addEventListener('pointermove', handleConnectionMove);
+		window.addEventListener('pointerup', handleConnectionEnd, { once: true });
+		window.addEventListener('pointercancel', handleConnectionEnd, { once: true });
+	}
+
+	function handleConnectionMove(event: PointerEvent) {
+		if (!connectionDraft) return;
+		const point = screenToCanvas(event.clientX, event.clientY, viewportX, viewportY, viewportScale);
+		const target = findConnectionTarget(point, connectionDraft.sourceItemId);
+		connectionDraft = { ...connectionDraft, end: point, targetItemId: target?.id ?? null };
+	}
+
+	function handleConnectionEnd() {
+		if (connectionDraft?.targetItemId) {
+			onCreateConnection(connectionDraft.sourceItemId, connectionDraft.sourceTodoId, connectionDraft.targetItemId);
+		}
+		connectionDraft = null;
+		window.removeEventListener('pointermove', handleConnectionMove);
+		window.removeEventListener('pointerup', handleConnectionEnd);
+		window.removeEventListener('pointercancel', handleConnectionEnd);
+	}
+
+	onDestroy(() => {
+		connectionDraft = null;
+		window.removeEventListener('pointermove', handleConnectionMove);
+		window.removeEventListener('pointerup', handleConnectionEnd);
+		window.removeEventListener('pointercancel', handleConnectionEnd);
+	});
 </script>
 
 <svelte:window onkeydown={handleKeyDown} onkeyup={handleKeyUp} onpaste={onPaste} />
@@ -336,6 +422,15 @@
 			/>
 		{/each}
 
+		<ConnectionLayer
+			{connections}
+			{items}
+			selectedId={selectedConnectionId}
+			draft={connectionDraft ? { source: connectionDraft.source, target: connectionDraft.end } : null}
+			onSelect={(id) => { onClearSelection(); selectedConnectionId = id; }}
+			onDelete={(id) => { onDeleteConnection(id); selectedConnectionId = null; }}
+		/>
+
 		<!-- Items -->
 		{#each sortedItems as item (item.id)}
 			<ItemWrapper
@@ -343,6 +438,8 @@
 				scale={viewportScale}
 				selected={selectedIds.has(item.id)}
 				locked={isItemLocked?.(item) ?? false}
+				fixedSize={item.type === 'todo'}
+				connectionTarget={connectionDraft?.targetItemId === item.id}
 				{spaceHeld}
 				onSelect={handleSelect}
 				onMoveStart={onMoveStart}
@@ -382,6 +479,18 @@
 						onUpdateText={onUpdateText}
 						onFinishEdit={() => { editingItemId = null; }}
 					/>
+				{:else if item.type === 'todo'}
+					<TodoItem
+						{item}
+						onUpdateTitle={onUpdateTodoTitle}
+						onAddEntry={onAddTodoEntry}
+						onUpdateEntry={onUpdateTodoEntry}
+						onToggleEntry={onToggleTodoEntry}
+						onDeleteEntry={onDeleteTodoEntry}
+						onStartConnection={handleStartConnection}
+					/>
+				{:else if item.type === 'link'}
+					<LinkItem {item} />
 				{/if}
 			</ItemWrapper>
 		{/each}
@@ -392,7 +501,7 @@
 			<div class="empty-icon">{@html icons.dropzone}</div>
 			<div class="empty-title">Drop references here</div>
 			<div class="empty-hint">
-				Images, videos, YouTube links, or text — drag, drop, or Ctrl+V
+				Add a to-do, paste a link, or drop media here
 			</div>
 		</div>
 	{/if}

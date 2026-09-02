@@ -6,7 +6,7 @@
  * This means board-actions.ts works without any changes.
  */
 
-import type { BoardData, BoardItem, GroupData, ProjectData } from '$lib/items/item-types.js';
+import type { BoardConnection, BoardData, BoardItem, GroupData, ProjectData } from '$lib/items/item-types.js';
 import { createBoard, createProject } from '$lib/items/item-types.js';
 
 export function createProjectStore() {
@@ -54,6 +54,24 @@ export function createProjectStore() {
 					b.id === project.activeBoardId
 						? { ...b, groups: fn(b.groups), modifiedAt: now }
 						: b
+				)
+			};
+		}
+	};
+
+	const connectionStore = {
+		get connections(): BoardConnection[] {
+			return activeBoard.connections;
+		},
+		updateConnections(fn: (connections: BoardConnection[]) => BoardConnection[]) {
+			const now = new Date().toISOString();
+			project = {
+				...project,
+				modifiedAt: now,
+				boards: project.boards.map((board) =>
+					board.id === project.activeBoardId
+						? { ...board, connections: fn(board.connections), modifiedAt: now }
+						: board
 				)
 			};
 		}
@@ -181,6 +199,7 @@ export function createProjectStore() {
 		},
 		boardStore,
 		groupStore,
+		connectionStore,
 		updateBoardAndGroups,
 		addBoard,
 		deleteBoard,

@@ -55,6 +55,10 @@ export const icons = {
 	// Text
 	text: `<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M3 3h10M8 3v10M5 13h6"/></svg>`,
 
+	todo: `<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="12" height="12" rx="2"/><path d="M5 5.5l1 1 2-2M9.5 5.5H12M5 10h1M8 10h4"/></svg>`,
+
+	link: `<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6.5 9.5l3-3"/><path d="M5.2 11.8l-1 .9a2.8 2.8 0 01-4-4l2.5-2.5a2.8 2.8 0 014 0"/><path d="M10.8 4.2l1-.9a2.8 2.8 0 014 4l-2.5 2.5a2.8 2.8 0 01-4 0"/></svg>`,
+
 	// Board
 	board: `<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="12" height="12" rx="2"/><path d="M2 6h12"/></svg>`,
 

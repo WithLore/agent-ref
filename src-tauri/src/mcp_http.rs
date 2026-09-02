@@ -138,7 +138,7 @@ fn enrich_item(item: &Value, board: &Value) -> Value {
 // --- Route handlers ---
 
 async fn handle_health() -> impl IntoResponse {
-    Json(serde_json::json!({ "status": "ok", "server": "agentref", "version": "0.2.0" }))
+    Json(serde_json::json!({ "status": "ok", "server": "agentref", "version": "0.3.0" }))
 }
 
 async fn handle_list_boards(
@@ -164,11 +164,13 @@ async fn handle_list_boards(
                         by_type[t] = Value::Number((count + 1).into());
                     }
                     let groups = b.get("groups").and_then(|g| g.as_array()).map(|g| g.len()).unwrap_or(0);
+                    let connections = b.get("connections").and_then(|c| c.as_array()).map(|c| c.len()).unwrap_or(0);
                     serde_json::json!({
                         "id": b.get("id"),
                         "name": b.get("name"),
                         "itemCount": items.len(),
                         "groupCount": groups,
+                        "connectionCount": connections,
                         "itemsByType": by_type,
                         "createdAt": b.get("createdAt"),
                         "modifiedAt": b.get("modifiedAt"),
@@ -203,6 +205,7 @@ async fn handle_get_board(
                         .map(|item| enrich_item(item, board))
                         .collect();
                     let groups = board.get("groups").cloned().unwrap_or(Value::Array(vec![]));
+                    let connections = board.get("connections").cloned().unwrap_or(Value::Array(vec![]));
                     (StatusCode::OK, Json(serde_json::json!({
                         "success": true,
                         "board": {
@@ -212,6 +215,7 @@ async fn handle_get_board(
                             "modifiedAt": board.get("modifiedAt"),
                             "itemCount": items.len(),
                             "groups": groups,
+                            "connections": connections,
                             "items": items,
                         }
                     })))
@@ -247,6 +251,7 @@ async fn handle_get_active_board(
                             .map(|item| enrich_item(item, board))
                             .collect();
                         let groups = board.get("groups").cloned().unwrap_or(Value::Array(vec![]));
+                        let connections = board.get("connections").cloned().unwrap_or(Value::Array(vec![]));
                         let app_running = live.is_some();
                         (StatusCode::OK, Json(serde_json::json!({
                             "success": true,
@@ -258,6 +263,7 @@ async fn handle_get_active_board(
                                 "modifiedAt": board.get("modifiedAt"),
                                 "itemCount": items.len(),
                                 "groups": groups,
+                                "connections": connections,
                                 "items": items,
                             }
                         })))
@@ -385,7 +391,11 @@ async fn handle_search_items(
                             let tags_str: String = tags.iter().filter_map(|t| t.as_str()).collect::<Vec<_>>().join(" ").to_lowercase();
                             let enriched = enrich_item(&item, board);
                             let gl = enriched.get("groupLabel").and_then(|v| v.as_str()).unwrap_or("").to_lowercase();
-                            if !url.contains(q) && !tags_str.contains(q) && !gl.contains(q) { continue; }
+                            let structured = serde_json::to_string(&serde_json::json!({
+                                "todoMeta": item.get("todoMeta"),
+                                "linkMeta": item.get("linkMeta")
+                            })).unwrap_or_default().to_lowercase();
+                            if !url.contains(q) && !tags_str.contains(q) && !gl.contains(q) && !structured.contains(q) { continue; }
                         }
 
                         matches.push(serde_json::json!({
@@ -451,19 +461,51 @@ async fn handle_add_items(
                             let id = uuid::Uuid::new_v4().to_string();
                             let item_type = spec.get("type").and_then(|v| v.as_str()).unwrap_or("image");
                             let is_video = item_type == "video" || item_type == "youtube";
-                            let new_item = serde_json::json!({
+                            let now = chrono_now();
+                            let todo_texts = spec.get("todoItems").and_then(|v| v.as_array()).cloned().unwrap_or_default();
+                            let todo_count = std::cmp::max(1, todo_texts.len());
+                            let default_width = if is_video { 480.0 } else if item_type == "todo" { 360.0 } else if item_type == "link" { 420.0 } else { 300.0 };
+                            let default_height = if is_video { 270.0 } else if item_type == "todo" { (58 + todo_count * 64 + 42) as f64 } else if item_type == "link" { 280.0 } else { 200.0 };
+                            let mut new_item = serde_json::json!({
                                 "id": id,
                                 "type": item_type,
                                 "url": spec.get("url").and_then(|v| v.as_str()).unwrap_or(""),
                                 "x": spec.get("x").and_then(|v| v.as_f64()).unwrap_or(i as f64 * 20.0),
                                 "y": spec.get("y").and_then(|v| v.as_f64()).unwrap_or(i as f64 * 20.0),
-                                "width": spec.get("width").and_then(|v| v.as_f64()).unwrap_or(if is_video { 480.0 } else { 300.0 }),
-                                "height": spec.get("height").and_then(|v| v.as_f64()).unwrap_or(if is_video { 270.0 } else { 200.0 }),
+                                "width": spec.get("width").and_then(|v| v.as_f64()).unwrap_or(default_width),
+                                "height": spec.get("height").and_then(|v| v.as_f64()).unwrap_or(default_height),
                                 "zIndex": max_z + 1 + i as i64,
                                 "rotation": 0,
                                 "tags": spec.get("tags").cloned().unwrap_or(Value::Array(vec![])),
                                 "rating": spec.get("rating").and_then(|v| v.as_u64()).unwrap_or(0),
+                                "createdAt": now,
+                                "updatedAt": now,
                             });
+                            if item_type == "todo" {
+                                let source = if todo_texts.is_empty() { vec![Value::String("New task".into())] } else { todo_texts };
+                                let entries: Vec<Value> = source.iter().map(|value| {
+                                    let timestamp = chrono_now();
+                                    serde_json::json!({
+                                        "id": uuid::Uuid::new_v4().to_string(),
+                                        "text": value.as_str().unwrap_or("New task"),
+                                        "createdAt": timestamp,
+                                        "updatedAt": timestamp,
+                                        "completed": false,
+                                        "completedAt": Value::Null
+                                    })
+                                }).collect();
+                                new_item["todoMeta"] = serde_json::json!({
+                                    "title": spec.get("title").and_then(|v| v.as_str()).unwrap_or("To-do list"),
+                                    "items": entries
+                                });
+                            }
+                            if item_type == "link" {
+                                let url = spec.get("url").and_then(|v| v.as_str()).unwrap_or("");
+                                new_item["linkMeta"] = serde_json::json!({
+                                    "title": spec.get("title").and_then(|v| v.as_str()).unwrap_or(url),
+                                    "domain": spec.get("domain").and_then(|v| v.as_str()).unwrap_or(url)
+                                });
+                            }
                             added_ids.push(id);
                             new_items.push(new_item);
                         }
@@ -527,6 +569,7 @@ async fn handle_move_items(
                                 if let Some(w) = change.get("width") { item["width"] = w.clone(); }
                                 if let Some(h) = change.get("height") { item["height"] = h.clone(); }
                                 if let Some(r) = change.get("rotation") { item["rotation"] = r.clone(); }
+                                item["updatedAt"] = Value::String(chrono_now());
                                 moved_ids.push(item_id.to_string());
                             }
                         }
@@ -612,6 +655,7 @@ async fn handle_tag_items(
                                     modified = true;
                                 }
                                 if modified {
+                                    item["updatedAt"] = Value::String(chrono_now());
                                     modified_ids.push(item_id.to_string());
                                 }
                             }
@@ -678,6 +722,15 @@ async fn handle_delete_items(
                             .cloned()
                             .collect();
 
+                        let _ = items;
+                        if let Some(connections) = board.get_mut("connections").and_then(|v| v.as_array_mut()) {
+                            connections.retain(|connection| {
+                                let source = connection.get("sourceItemId").and_then(|v| v.as_str()).unwrap_or("");
+                                let target = connection.get("targetItemId").and_then(|v| v.as_str()).unwrap_or("");
+                                !item_ids.iter().any(|id| id == source || id == target)
+                            });
+                        }
+
                         board["modifiedAt"] = Value::String(chrono_now());
 
                         match write_project(&path, &project) {
@@ -702,13 +755,212 @@ async fn handle_delete_items(
     }
 }
 
+async fn handle_update_todo_list(
+    State(state): State<Arc<McpHttpState>>,
+    Json(req): Json<Value>,
+) -> impl IntoResponse {
+    let project_path = req.get("projectPath").and_then(|v| v.as_str());
+    let board_id = req.get("boardId").and_then(|v| v.as_str()).unwrap_or("");
+    let item_id = req.get("itemId").and_then(|v| v.as_str()).unwrap_or("");
+
+    match resolve_project_path(project_path) {
+        Err(e) => (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "success": false, "error": e }))),
+        Ok(path) => match read_project(&path) {
+            Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "success": false, "error": e }))),
+            Ok(mut project) => match find_board_mut(&mut project, board_id) {
+                Err(e) => (StatusCode::NOT_FOUND, Json(serde_json::json!({ "success": false, "error": e }))),
+                Ok(board) => {
+                    let now = chrono_now();
+                    let operations = req.get("operations").and_then(|v| v.as_array()).cloned().unwrap_or_default();
+                    let mut deleted_todo_ids: Vec<String> = vec![];
+                    let updated_item: Value;
+
+                    {
+                        let items = match board.get_mut("items").and_then(|v| v.as_array_mut()) {
+                            Some(items) => items,
+                            None => return (StatusCode::NOT_FOUND, Json(serde_json::json!({ "success": false, "error": "Board has no items" }))),
+                        };
+                        let item = match items.iter_mut().find(|item| item.get("id").and_then(|v| v.as_str()) == Some(item_id)) {
+                            Some(item) => item,
+                            None => return (StatusCode::NOT_FOUND, Json(serde_json::json!({ "success": false, "error": "To-do list not found" }))),
+                        };
+                        if item.get("type").and_then(|v| v.as_str()) != Some("todo") {
+                            return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "success": false, "error": "Item is not a to-do list" })));
+                        }
+                        if item.get("todoMeta").and_then(|v| v.as_object()).is_none() {
+                            item["todoMeta"] = serde_json::json!({ "title": "To-do list", "items": [] });
+                        }
+                        if let Some(title) = req.get("title").and_then(|v| v.as_str()) {
+                            item["todoMeta"]["title"] = Value::String(title.to_string());
+                        }
+                        if item["todoMeta"].get("items").and_then(|v| v.as_array()).is_none() {
+                            item["todoMeta"]["items"] = Value::Array(vec![]);
+                        }
+                        let entries = item["todoMeta"]["items"].as_array_mut().unwrap();
+
+                        for operation in &operations {
+                            let action = operation.get("action").and_then(|v| v.as_str()).unwrap_or("");
+                            let todo_id = operation.get("todoId").and_then(|v| v.as_str()).unwrap_or("");
+                            match action {
+                                "add" => {
+                                    let text = operation.get("text").and_then(|v| v.as_str()).unwrap_or("New task");
+                                    entries.push(serde_json::json!({
+                                        "id": uuid::Uuid::new_v4().to_string(),
+                                        "text": text,
+                                        "createdAt": now,
+                                        "updatedAt": now,
+                                        "completed": false,
+                                        "completedAt": Value::Null
+                                    }));
+                                }
+                                "edit" => {
+                                    if let Some(entry) = entries.iter_mut().find(|entry| entry.get("id").and_then(|v| v.as_str()) == Some(todo_id)) {
+                                        if let Some(text) = operation.get("text").and_then(|v| v.as_str()) {
+                                            entry["text"] = Value::String(text.to_string());
+                                            entry["updatedAt"] = Value::String(now.clone());
+                                        }
+                                    }
+                                }
+                                "complete" => {
+                                    if let Some(entry) = entries.iter_mut().find(|entry| entry.get("id").and_then(|v| v.as_str()) == Some(todo_id)) {
+                                        let current = entry.get("completed").and_then(|v| v.as_bool()).unwrap_or(false);
+                                        let completed = operation.get("completed").and_then(|v| v.as_bool()).unwrap_or(!current);
+                                        entry["completed"] = Value::Bool(completed);
+                                        entry["completedAt"] = if completed { Value::String(now.clone()) } else { Value::Null };
+                                        entry["updatedAt"] = Value::String(now.clone());
+                                    }
+                                }
+                                "delete" => {
+                                    let before = entries.len();
+                                    entries.retain(|entry| entry.get("id").and_then(|v| v.as_str()) != Some(todo_id));
+                                    if entries.len() != before { deleted_todo_ids.push(todo_id.to_string()); }
+                                }
+                                _ => {}
+                            }
+                        }
+                        item["height"] = Value::Number(((58 + std::cmp::max(1, entries.len()) * 64 + 42) as u64).into());
+                        item["updatedAt"] = Value::String(now.clone());
+                        updated_item = item.clone();
+                    }
+
+                    if !deleted_todo_ids.is_empty() {
+                        if let Some(connections) = board.get_mut("connections").and_then(|v| v.as_array_mut()) {
+                            connections.retain(|connection| {
+                                let source_item = connection.get("sourceItemId").and_then(|v| v.as_str()).unwrap_or("");
+                                let source_todo = connection.get("sourceTodoId").and_then(|v| v.as_str()).unwrap_or("");
+                                source_item != item_id || !deleted_todo_ids.iter().any(|id| id == source_todo)
+                            });
+                        }
+                    }
+                    board["modifiedAt"] = Value::String(now);
+
+                    match write_project(&path, &project) {
+                        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "success": false, "error": e }))),
+                        Ok(()) => {
+                            let _ = state.app_handle.emit("mcp:project-changed", &path);
+                            (StatusCode::OK, Json(serde_json::json!({ "success": true, "item": updated_item })))
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+async fn handle_connect_todo_item(
+    State(state): State<Arc<McpHttpState>>,
+    Json(req): Json<Value>,
+) -> impl IntoResponse {
+    let project_path = req.get("projectPath").and_then(|v| v.as_str());
+    let board_id = req.get("boardId").and_then(|v| v.as_str()).unwrap_or("");
+    let source_item_id = req.get("sourceItemId").and_then(|v| v.as_str()).unwrap_or("");
+    let source_todo_id = req.get("sourceTodoId").and_then(|v| v.as_str()).unwrap_or("");
+    let target_item_id = req.get("targetItemId").and_then(|v| v.as_str()).unwrap_or("");
+
+    match resolve_project_path(project_path) {
+        Err(e) => (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "success": false, "error": e }))),
+        Ok(path) => match read_project(&path) {
+            Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "success": false, "error": e }))),
+            Ok(mut project) => match find_board_mut(&mut project, board_id) {
+                Err(e) => (StatusCode::NOT_FOUND, Json(serde_json::json!({ "success": false, "error": e }))),
+                Ok(board) => {
+                    let items = board.get("items").and_then(|v| v.as_array()).cloned().unwrap_or_default();
+                    let source = items.iter().find(|item| item.get("id").and_then(|v| v.as_str()) == Some(source_item_id));
+                    let target_exists = items.iter().any(|item| item.get("id").and_then(|v| v.as_str()) == Some(target_item_id));
+                    let todo_exists = source.and_then(|item| item.get("todoMeta")).and_then(|meta| meta.get("items")).and_then(|v| v.as_array())
+                        .map(|entries| entries.iter().any(|entry| entry.get("id").and_then(|v| v.as_str()) == Some(source_todo_id))).unwrap_or(false);
+                    if !todo_exists || !target_exists || source_item_id == target_item_id {
+                        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "success": false, "error": "Invalid to-do source or target item" })));
+                    }
+                    if board.get("connections").and_then(|v| v.as_array()).is_none() { board["connections"] = Value::Array(vec![]); }
+                    let connections = board.get_mut("connections").unwrap().as_array_mut().unwrap();
+                    if let Some(existing) = connections.iter().find(|connection|
+                        connection.get("sourceItemId").and_then(|v| v.as_str()) == Some(source_item_id) &&
+                        connection.get("sourceTodoId").and_then(|v| v.as_str()) == Some(source_todo_id) &&
+                        connection.get("targetItemId").and_then(|v| v.as_str()) == Some(target_item_id)
+                    ) {
+                        return (StatusCode::OK, Json(serde_json::json!({ "success": true, "connection": existing, "created": false })));
+                    }
+                    let connection = serde_json::json!({
+                        "id": uuid::Uuid::new_v4().to_string(),
+                        "sourceItemId": source_item_id,
+                        "sourceTodoId": source_todo_id,
+                        "targetItemId": target_item_id,
+                        "createdAt": chrono_now()
+                    });
+                    connections.push(connection.clone());
+                    let _ = connections;
+                    board["modifiedAt"] = Value::String(chrono_now());
+                    match write_project(&path, &project) {
+                        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "success": false, "error": e }))),
+                        Ok(()) => {
+                            let _ = state.app_handle.emit("mcp:project-changed", &path);
+                            (StatusCode::OK, Json(serde_json::json!({ "success": true, "connection": connection, "created": true })))
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+async fn handle_delete_connections(
+    State(state): State<Arc<McpHttpState>>,
+    Json(req): Json<Value>,
+) -> impl IntoResponse {
+    let project_path = req.get("projectPath").and_then(|v| v.as_str());
+    let board_id = req.get("boardId").and_then(|v| v.as_str()).unwrap_or("");
+    let connection_ids: Vec<String> = req.get("connectionIds").and_then(|v| v.as_array())
+        .map(|values| values.iter().filter_map(|v| v.as_str().map(String::from)).collect()).unwrap_or_default();
+    match resolve_project_path(project_path) {
+        Err(e) => (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "success": false, "error": e }))),
+        Ok(path) => match read_project(&path) {
+            Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "success": false, "error": e }))),
+            Ok(mut project) => match find_board_mut(&mut project, board_id) {
+                Err(e) => (StatusCode::NOT_FOUND, Json(serde_json::json!({ "success": false, "error": e }))),
+                Ok(board) => {
+                    let mut deleted = 0;
+                    if let Some(connections) = board.get_mut("connections").and_then(|v| v.as_array_mut()) {
+                        let before = connections.len();
+                        connections.retain(|connection| !connection_ids.iter().any(|id| connection.get("id").and_then(|v| v.as_str()) == Some(id)));
+                        deleted = before - connections.len();
+                    }
+                    board["modifiedAt"] = Value::String(chrono_now());
+                    match write_project(&path, &project) {
+                        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "success": false, "error": e }))),
+                        Ok(()) => {
+                            let _ = state.app_handle.emit("mcp:project-changed", &path);
+                            (StatusCode::OK, Json(serde_json::json!({ "success": true, "deletedCount": deleted })))
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 fn chrono_now() -> String {
-    // Simple ISO-ish timestamp without chrono dependency
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default();
-    // Return epoch millis as string — the frontend will handle formatting
-    format!("{}", now.as_millis())
+    chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
 }
 
 // --- Router builder ---
@@ -726,6 +978,9 @@ pub fn create_router(state: McpHttpState) -> Router {
         .route("/mcp/move_items", post(handle_move_items))
         .route("/mcp/tag_items", post(handle_tag_items))
         .route("/mcp/delete_items", post(handle_delete_items))
+        .route("/mcp/update_todo_list", post(handle_update_todo_list))
+        .route("/mcp/connect_todo_item", post(handle_connect_todo_item))
+        .route("/mcp/delete_connections", post(handle_delete_connections))
         .with_state(shared)
 }
 

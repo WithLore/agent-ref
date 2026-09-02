@@ -23,6 +23,15 @@ describe('createItem', () => {
 		expect(item.tags).toEqual([]);
 		expect(item.rating).toBe(0);
 		expect(item.id).toBeTruthy();
+		expect(item.createdAt).toBeTruthy();
+		expect(item.updatedAt).toBe(item.createdAt);
+	});
+
+	it('creates a timestamped todo list and row by default', () => {
+		const item = createItem({ type: 'todo', url: '' });
+		expect(item.todoMeta?.items).toHaveLength(1);
+		expect(item.todoMeta?.items[0].createdAt).toBeTruthy();
+		expect(item.todoMeta?.items[0].completedAt).toBeNull();
 	});
 
 	it('generates unique IDs', () => {
@@ -74,6 +83,7 @@ describe('createBoard', () => {
 		expect(board.name).toBe('Board 1');
 		expect(board.items).toEqual([]);
 		expect(board.groups).toEqual([]);
+		expect(board.connections).toEqual([]);
 		expect(board.viewport).toEqual({ x: 0, y: 0, scale: 1 });
 		expect(board.id).toBeTruthy();
 		expect(board.createdAt).toBeTruthy();
@@ -90,7 +100,7 @@ describe('createProject', () => {
 	it('creates a project with one default board', () => {
 		const project = createProject();
 		expect(project.name).toBe('Untitled Project');
-		expect(project.version).toBe(1);
+		expect(project.version).toBe(2);
 		expect(project.boards).toHaveLength(1);
 		expect(project.boards[0].name).toBe('Board 1');
 		expect(project.activeBoardId).toBe(project.boards[0].id);
