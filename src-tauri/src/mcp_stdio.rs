@@ -2,34 +2,112 @@
 //!
 //! Launched via `app.exe --mcp`. This process has NO GUI.
 //! It reads JSON-RPC requests from stdin, forwards them as HTTP
-//! POST requests to the running AgentRef app (localhost:17532),
-//! and writes JSON-RPC responses to stdout.
+//! POST requests to AgentRef (localhost:17532), opens the GUI when
+//! necessary, and writes JSON-RPC responses to stdout.
 
 use serde_json::Value;
 use std::io::{self, BufRead, Write};
+use std::process::{Command, Stdio};
+use std::thread;
+use std::time::Duration;
 
 use crate::mcp_http::MCP_HTTP_PORT;
 
 const API_BASE: &str = "http://127.0.0.1";
+const SERVER_INSTRUCTIONS: &str = "At the start of every Codex task, call get_active_board with no arguments so you understand what the user currently has on their plate. Treat saved to-do timestamps as permanent and authoritative. Re-read the active board before planning, prioritizing, reporting status, or changing board content. If a board call fails, say that AgentRef is unavailable rather than assuming the board is empty.";
 
 fn api_url(path: &str) -> String {
     format!("{}:{}{}", API_BASE, MCP_HTTP_PORT, path)
 }
 
-fn http_post(path: &str, body: &Value) -> Result<Value, String> {
-    match ureq::post(&api_url(path)).send_json(body) {
-        Ok(resp) => {
-            let body: Value = resp.into_json()
-                .map_err(|e| format!("Failed to parse response: {}", e))?;
-            Ok(body)
+fn send_http_post(path: &str, body: &Value) -> Result<ureq::Response, ureq::Error> {
+    ureq::post(&api_url(path)).send_json(body)
+}
+
+fn parse_http_response(resp: ureq::Response) -> Result<Value, String> {
+    resp.into_json()
+        .map_err(|e| format!("Failed to parse response: {}", e))
+}
+
+fn launch_agentref_gui() -> Result<(), String> {
+    let executable = std::env::current_exe()
+        .map_err(|e| format!("Could not locate AgentRef: {}", e))?;
+
+    #[cfg(target_os = "macos")]
+    if let Some(app_bundle) = executable
+        .ancestors()
+        .find(|path| path.extension().and_then(|value| value.to_str()) == Some("app"))
+    {
+        let status = Command::new("open")
+            .arg("-n")
+            .arg(app_bundle)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .map_err(|e| format!("Could not open AgentRef: {}", e))?;
+
+        if !status.success() {
+            return Err("Could not open AgentRef through macOS Launch Services".to_string());
         }
+
+        return Ok(());
+    }
+
+    Command::new(executable)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|e| format!("Could not open AgentRef: {}", e))?;
+
+    Ok(())
+}
+
+fn http_post(path: &str, body: &Value) -> Result<Value, String> {
+    match send_http_post(path, body) {
+        Ok(resp) => return parse_http_response(resp),
         Err(ureq::Error::Status(code, resp)) => {
             let body = resp.into_string().unwrap_or_default();
-            Err(format!("HTTP {} — {}", code, body))
+            return Err(format!("HTTP {} — {}", code, body));
         }
-        Err(e) => {
-            Err(format!("Connection error: {} (is AgentRef running?)", e))
+        Err(ureq::Error::Transport(_)) => {}
+    }
+
+    if path == "/mcp/get_active_board" {
+        let project_path = body.get("projectPath").and_then(|value| value.as_str());
+        if let Ok(snapshot) = crate::mcp_http::read_saved_active_board_snapshot(project_path) {
+            return Ok(snapshot);
         }
+    }
+
+    launch_agentref_gui()?;
+
+    for _ in 0..50 {
+        thread::sleep(Duration::from_millis(100));
+
+        match send_http_post(path, body) {
+            Ok(resp) => return parse_http_response(resp),
+            Err(ureq::Error::Status(code, resp)) => {
+                let body = resp.into_string().unwrap_or_default();
+                return Err(format!("HTTP {} — {}", code, body));
+            }
+            Err(ureq::Error::Transport(_)) => continue,
+        }
+    }
+
+    Err("Connection error: AgentRef could not be opened automatically".to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::SERVER_INSTRUCTIONS;
+
+    #[test]
+    fn server_instructions_require_active_board_context() {
+        assert!(SERVER_INSTRUCTIONS.contains("start of every Codex task"));
+        assert!(SERVER_INSTRUCTIONS.contains("get_active_board"));
+        assert!(SERVER_INSTRUCTIONS.contains("timestamps as permanent"));
     }
 }
 
@@ -343,7 +421,8 @@ pub fn run_mcp_server() {
                     "serverInfo": {
                         "name": "agentref",
                         "version": "0.3.0"
-                    }
+                    },
+                    "instructions": SERVER_INSTRUCTIONS
                 }))
             }
 

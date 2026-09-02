@@ -12,7 +12,7 @@ The longer-term product direction is low-friction context dumping for human and 
 - `src-tauri/` contains the Tauri 2 macOS/Windows/Linux shell and Rust MCP bridge.
 - The running GUI exposes a local HTTP API at `127.0.0.1:17532`.
 - The compiled binary with `--mcp` is a stdio MCP proxy for Codex and other agents.
-- Live MCP tools require the AgentRef GUI to be running. Do not describe the integration as connected until the health endpoint and an MCP handshake have both been verified.
+- `get_active_board` can read the autosaved board while the GUI is closed. Other live MCP tools use the GUI's local API, and the stdio proxy opens the app when needed; do not describe the integration as connected until the health endpoint and an MCP handshake have both been verified.
 
 ## Working agreements
 

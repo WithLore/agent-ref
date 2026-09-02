@@ -138,6 +138,62 @@ fn enrich_item(item: &Value, board: &Value) -> Value {
     enriched
 }
 
+fn build_active_board_snapshot(
+    project: &Value,
+    preferred_board_id: Option<&str>,
+    app_running: bool,
+) -> Result<Value, String> {
+    let saved_board_id = project.get("activeBoardId").and_then(|v| v.as_str());
+    let board_id = preferred_board_id.or(saved_board_id).unwrap_or("");
+    let board = find_board(project, board_id)?;
+    let items: Vec<Value> = get_board_items(board)
+        .iter()
+        .map(|item| enrich_item(item, board))
+        .collect();
+    let groups = board
+        .get("groups")
+        .cloned()
+        .unwrap_or(Value::Array(vec![]));
+    let connections = board
+        .get("connections")
+        .cloned()
+        .unwrap_or(Value::Array(vec![]));
+
+    Ok(serde_json::json!({
+        "success": true,
+        "appRunning": app_running,
+        "board": {
+            "id": board.get("id"),
+            "name": board.get("name"),
+            "createdAt": board.get("createdAt"),
+            "modifiedAt": board.get("modifiedAt"),
+            "itemCount": items.len(),
+            "groups": groups,
+            "connections": connections,
+            "items": items,
+        }
+    }))
+}
+
+pub fn read_saved_active_board_snapshot(project_path: Option<&str>) -> Result<Value, String> {
+    let live = read_live_state();
+    let project = if let Some(path) = project_path.filter(|path| !path.is_empty()) {
+        read_project(path)?
+    } else if let Some(project) = live.as_ref().and_then(|state| state.get("project")) {
+        project.clone()
+    } else {
+        let home = dirs_next().map_err(|_| "Could not locate the AgentRef recovery folder")?;
+        let recovery_path = home.join(".agentref").join("autosave.json");
+        read_project(&recovery_path.to_string_lossy())?
+    };
+    let live_board_id = live
+        .as_ref()
+        .and_then(|state| state.get("activeBoardId"))
+        .and_then(|value| value.as_str());
+
+    build_active_board_snapshot(&project, live_board_id, false)
+}
+
 // --- Route handlers ---
 
 async fn handle_health() -> impl IntoResponse {
@@ -238,39 +294,14 @@ async fn handle_get_active_board(
         Ok(path) => match read_project(&path) {
             Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "success": false, "error": e }))),
             Ok(project) => {
-                // Use live state for active board ID if available
                 let live = read_live_state();
                 let live_board_id = live.as_ref()
-                    .and_then(|l| l.get("activeBoardId"))
-                    .and_then(|v| v.as_str());
-                let saved_board_id = project.get("activeBoardId")
-                    .and_then(|v| v.as_str());
-                let board_id = live_board_id.or(saved_board_id).unwrap_or("");
+                    .and_then(|state| state.get("activeBoardId"))
+                    .and_then(|value| value.as_str());
 
-                match find_board(&project, board_id) {
+                match build_active_board_snapshot(&project, live_board_id, true) {
                     Err(e) => (StatusCode::NOT_FOUND, Json(serde_json::json!({ "success": false, "error": e }))),
-                    Ok(board) => {
-                        let items: Vec<Value> = get_board_items(board).iter()
-                            .map(|item| enrich_item(item, board))
-                            .collect();
-                        let groups = board.get("groups").cloned().unwrap_or(Value::Array(vec![]));
-                        let connections = board.get("connections").cloned().unwrap_or(Value::Array(vec![]));
-                        let app_running = live.is_some();
-                        (StatusCode::OK, Json(serde_json::json!({
-                            "success": true,
-                            "appRunning": app_running,
-                            "board": {
-                                "id": board.get("id"),
-                                "name": board.get("name"),
-                                "createdAt": board.get("createdAt"),
-                                "modifiedAt": board.get("modifiedAt"),
-                                "itemCount": items.len(),
-                                "groups": groups,
-                                "connections": connections,
-                                "items": items,
-                            }
-                        })))
-                    }
+                    Ok(snapshot) => (StatusCode::OK, Json(snapshot)),
                 }
             }
         }
@@ -993,4 +1024,44 @@ pub async fn start_mcp_http_server(state: McpHttpState) {
     eprintln!("[AgentRef] MCP HTTP API listening on http://{}", addr);
     let listener = tokio::net::TcpListener::bind(&addr).await.unwrap();
     axum::serve(listener, router).await.unwrap();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::build_active_board_snapshot;
+
+    #[test]
+    fn saved_snapshot_keeps_todo_timestamps_without_the_gui() {
+        let project = serde_json::json!({
+            "activeBoardId": "board-1",
+            "boards": [{
+                "id": "board-1",
+                "name": "Today",
+                "createdAt": "2026-09-02T12:00:00.000Z",
+                "modifiedAt": "2026-09-02T12:05:00.000Z",
+                "groups": [],
+                "connections": [],
+                "items": [{
+                    "id": "todo-list-1",
+                    "type": "todo",
+                    "rating": 0,
+                    "todoMeta": {
+                        "title": "To-do list",
+                        "items": [{
+                            "id": "todo-1",
+                            "text": "Ship AgentRef",
+                            "completed": false,
+                            "createdAt": "2026-09-02T12:01:00.000Z",
+                            "updatedAt": "2026-09-02T12:02:00.000Z"
+                        }]
+                    }
+                }]
+            }]
+        });
+
+        let snapshot = build_active_board_snapshot(&project, None, false).unwrap();
+        assert_eq!(snapshot["appRunning"], false);
+        assert_eq!(snapshot["board"]["items"][0]["todoMeta"]["items"][0]["createdAt"], "2026-09-02T12:01:00.000Z");
+        assert_eq!(snapshot["board"]["items"][0]["ratingLabel"], "unrated");
+    }
 }
