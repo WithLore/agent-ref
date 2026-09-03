@@ -11,6 +11,10 @@
 		spaceHeld = false,
 		locked = false,
 		fixedSize = false,
+		freeResize = false,
+		minWidth = 20,
+		minHeight = 20,
+		rotationEnabled = true,
 		connectionTarget = false,
 		onSelect,
 		onMoveStart,
@@ -32,6 +36,10 @@
 		spaceHeld?: boolean;
 		locked?: boolean;
 		fixedSize?: boolean;
+		freeResize?: boolean;
+		minWidth?: number;
+		minHeight?: number;
+		rotationEnabled?: boolean;
 		connectionTarget?: boolean;
 		onSelect: (id: string, multi: boolean) => void;
 		onMoveStart?: (id: string) => void;
@@ -193,6 +201,17 @@
 		let targetX = resizeStartItemX;
 		let targetY = resizeStartItemY;
 
+		if (freeResize) {
+			const resizesFromLeft = resizeCorner === 'sw' || resizeCorner === 'nw';
+			const resizesFromTop = resizeCorner === 'ne' || resizeCorner === 'nw';
+			newWidth = Math.max(minWidth, resizeStartW + (resizesFromLeft ? -rawDx : rawDx));
+			const newHeight = Math.max(minHeight, resizeStartH + (resizesFromTop ? -rawDy : rawDy));
+			if (resizesFromLeft) targetX = resizeStartItemX + (resizeStartW - newWidth);
+			if (resizesFromTop) targetY = resizeStartItemY + (resizeStartH - newHeight);
+			onResize(item.id, newWidth, newHeight, targetX, targetY);
+			return;
+		}
+
 		// Compute size delta based on which corner is being dragged
 		switch (resizeCorner) {
 			case 'se': {
@@ -345,10 +364,12 @@
 	{/if}
 
 	{#if selected && !fixedSize}
-		<!-- Rotation handle -->
-		<div class="rotation-line"></div>
-		<!-- svelte-ignore a11y_no_static_element_interactions -->
-		<div class="rotation-handle" onpointerdown={startRotation}></div>
+		{#if rotationEnabled}
+			<!-- Rotation handle -->
+			<div class="rotation-line"></div>
+			<!-- svelte-ignore a11y_no_static_element_interactions -->
+			<div class="rotation-handle" onpointerdown={startRotation}></div>
+		{/if}
 
 		<!-- Resize handles -->
 		<!-- svelte-ignore a11y_no_static_element_interactions -->

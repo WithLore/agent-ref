@@ -21,7 +21,10 @@
 	import type { AlignDirection, DistributeDirection } from '$lib/board/alignment.js';
 	import { createTodoEntry, getUrlDomain, isYoutubeUrl, isVideoUrl, isImageUrl } from '$lib/items/item-types.js';
 	import type { BoardConnection, BoardItem, TodoListMeta, VideoMeta, GroupData, ProjectData } from '$lib/items/item-types.js';
-	import { getTodoListHeight } from '$lib/board/connection-geometry.js';
+	import {
+		getTodoHeightAfterItemCountChange,
+		getTodoListHeight
+	} from '$lib/board/connection-geometry.js';
 	import {
 		saveProject,
 		saveProjectAs,
@@ -901,7 +904,11 @@
 		const beforeUpdatedAt = item.updatedAt;
 		const afterUpdatedAt = new Date().toISOString();
 		const afterMeta = change(cloneState(beforeMeta), afterUpdatedAt);
-		const afterHeight = getTodoListHeight(afterMeta.items.length);
+		const afterHeight = getTodoHeightAfterItemCountChange(
+			item.height,
+			beforeMeta.items.length,
+			afterMeta.items.length
+		);
 		applyTodoState(id, afterMeta, afterHeight, afterUpdatedAt);
 		history.push({
 			label,
@@ -946,7 +953,11 @@
 		const beforeUpdatedAt = item.updatedAt;
 		const afterUpdatedAt = new Date().toISOString();
 		const afterMeta = { ...cloneState(beforeMeta), items: beforeMeta.items.filter((entry) => entry.id !== todoId) };
-		const afterHeight = getTodoListHeight(afterMeta.items.length);
+		const afterHeight = getTodoHeightAfterItemCountChange(
+			item.height,
+			beforeMeta.items.length,
+			afterMeta.items.length
+		);
 		const removedConnections = connectionActions.removeForTodo(id, todoId);
 		applyTodoState(id, afterMeta, afterHeight, afterUpdatedAt);
 		history.push({

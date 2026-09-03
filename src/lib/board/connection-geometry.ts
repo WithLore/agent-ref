@@ -2,7 +2,9 @@ import type { BoardConnection, BoardItem } from '$lib/items/item-types.js';
 
 export const TODO_HEADER_HEIGHT = 58;
 export const TODO_ROW_HEIGHT = 64;
+export const TODO_MIN_ROW_HEIGHT = 48;
 export const TODO_ADD_HEIGHT = 42;
+export const TODO_MIN_WIDTH = 260;
 
 export interface Point { x: number; y: number }
 
@@ -10,12 +12,30 @@ export function getTodoListHeight(itemCount: number): number {
 	return TODO_HEADER_HEIGHT + Math.max(1, itemCount) * TODO_ROW_HEIGHT + TODO_ADD_HEIGHT;
 }
 
+export function getTodoListMinHeight(itemCount: number): number {
+	return TODO_HEADER_HEIGHT + Math.max(1, itemCount) * TODO_MIN_ROW_HEIGHT + TODO_ADD_HEIGHT;
+}
+
+export function getTodoHeightAfterItemCountChange(
+	currentHeight: number,
+	previousItemCount: number,
+	nextItemCount: number
+): number {
+	const wasAutomatic = Math.abs(currentHeight - getTodoListHeight(previousItemCount)) < 0.5;
+	return wasAutomatic
+		? getTodoListHeight(nextItemCount)
+		: Math.max(currentHeight, getTodoListMinHeight(nextItemCount));
+}
+
 export function getTodoSourcePoint(item: BoardItem, todoId: string): Point | null {
-	const index = item.todoMeta?.items.findIndex((entry) => entry.id === todoId) ?? -1;
+	const entries = item.todoMeta?.items ?? [];
+	const index = entries.findIndex((entry) => entry.id === todoId);
 	if (index < 0) return null;
+	const availableRowsHeight = item.height - TODO_HEADER_HEIGHT - TODO_ADD_HEIGHT;
+	const rowHeight = Math.max(TODO_MIN_ROW_HEIGHT, availableRowsHeight / Math.max(1, entries.length));
 	return {
 		x: item.x + item.width,
-		y: item.y + TODO_HEADER_HEIGHT + index * TODO_ROW_HEIGHT + TODO_ROW_HEIGHT / 2
+		y: item.y + TODO_HEADER_HEIGHT + index * rowHeight + rowHeight / 2
 	};
 }
 

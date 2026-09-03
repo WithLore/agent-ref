@@ -124,6 +124,8 @@
 		width: 100%;
 		height: 100%;
 		box-sizing: border-box;
+		display: flex;
+		flex-direction: column;
 		background: var(--bg-surface, #111);
 		border: 1px solid var(--border-medium, #2a2a2a);
 		border-radius: var(--radius-sm, 4px);
@@ -133,6 +135,7 @@
 
 	.todo-header {
 		height: 58px;
+		flex: 0 0 58px;
 		box-sizing: border-box;
 		display: flex;
 		align-items: center;
@@ -159,10 +162,13 @@
 	.title-input { font-size: 15px; line-height: 20px; font-weight: 600; padding: 0; }
 	.list-time,
 	.timestamps { color: var(--text-secondary, #808080); font-size: 10px; line-height: 14px; font-variant-numeric: tabular-nums; }
+	.todo-rows { min-height: 0; flex: 1 1 auto; display: flex; flex-direction: column; }
 
 	.todo-row {
 		position: relative;
-		height: 64px;
+		height: auto;
+		min-height: 48px;
+		flex: 1 1 64px;
 		box-sizing: border-box;
 		display: flex;
 		align-items: center;
@@ -195,7 +201,7 @@
 
 	.entry-input { font-size: 13px; line-height: 18px; padding: 0; }
 	.complete .entry-input { color: #808080; text-decoration: line-through; }
-	.timestamps { display: flex; gap: 7px; white-space: nowrap; }
+	.timestamps { display: flex; flex-wrap: wrap; column-gap: 7px; row-gap: 0; }
 	.completed-time { color: var(--success, #2ed573); }
 
 	.delete-entry {
@@ -236,6 +242,7 @@
 
 	.add-row {
 		height: 42px;
+		flex: 0 0 42px;
 		box-sizing: border-box;
 		display: flex;
 		align-items: center;

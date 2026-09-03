@@ -13,7 +13,11 @@
 	import MarqueeRect from '$lib/canvas/MarqueeRect.svelte';
 	import { screenToCanvas } from '$lib/canvas/coordinates.js';
 	import { icons } from '$lib/ui/icons.js';
-	import { getTodoSourcePoint } from '$lib/board/connection-geometry.js';
+	import {
+		getTodoListMinHeight,
+		getTodoSourcePoint,
+		TODO_MIN_WIDTH
+	} from '$lib/board/connection-geometry.js';
 
 	let {
 		items,
@@ -440,7 +444,10 @@
 				scale={viewportScale}
 				selected={selectedIds.has(item.id)}
 				locked={isItemLocked?.(item) ?? false}
-				fixedSize={item.type === 'todo'}
+				freeResize={item.type === 'todo'}
+				minWidth={item.type === 'todo' ? TODO_MIN_WIDTH : 20}
+				minHeight={item.type === 'todo' ? getTodoListMinHeight(item.todoMeta?.items.length ?? 0) : 20}
+				rotationEnabled={item.type !== 'todo'}
 				connectionTarget={connectionDraft?.targetItemId === item.id}
 				{spaceHeld}
 				onSelect={handleSelect}
