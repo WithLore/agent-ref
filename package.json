@@ -13,6 +13,8 @@
 		"tauri": "tauri",
 		"tauri:dev": "tauri dev",
 		"tauri:build": "tauri build",
+		"sign:local:macos": "node scripts/sign-local-macos.js",
+		"tauri:build:local": "npm run tauri:build && npm run sign:local:macos",
 		"test": "vitest run",
 		"test:watch": "vitest"
 	},

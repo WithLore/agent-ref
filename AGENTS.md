@@ -22,6 +22,7 @@ The longer-term product direction is low-friction context dumping for human and 
 - Use `npm run tauri:dev` for the native development app and `npm run dev` only for browser-only UI work.
 - Before handing off code changes, run `npm run test`, `npm run check`, and `npm run build`.
 - After Rust, Tauri, persistence, or MCP changes, also build the native app and verify `GET http://127.0.0.1:17532/health`, the MCP `initialize` response, and `tools/list`.
+- On Nicholas's Mac, use `npm run tauri:build:local` for release builds. It applies the stable `AgentRef Local Development` signature so macOS Screen Recording permission survives rebuilds.
 - After a verified native build, update the installed copy with `ditto src-tauri/target/release/bundle/macos/AgentRef.app /Users/nicholas/Applications/AgentRef.app` before testing the installed app. Ask before overwriting an installed copy that contains unverified user changes.
 - Treat a successful compile as technical verification, not visual acceptance. Inspect the actual desktop window for meaningful UI changes.
 
